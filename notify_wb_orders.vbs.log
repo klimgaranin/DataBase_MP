@@ -1,6 +1,0 @@
-2026-01-18 22:39:16 VBS START
-2026-01-18 22:39:16 Run: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\marketplace-etl\run_wb_orders_hidden.ps1"
-2026-01-18 22:39:17 VBS END rc=1
-2026-01-18 22:39:54 VBS START
-2026-01-18 22:39:54 Run: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\marketplace-etl\run_wb_orders_hidden.ps1"
-2026-01-18 22:39:54 VBS END rc=1
