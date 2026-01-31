@@ -1,0 +1,39 @@
+@echo off
+setlocal
+
+set ROOT=C:\marketplace-etl
+set LOG=%ROOT%\logs_wb_orders.txt
+
+echo ==== %date% %time% START ====>> "%LOG%"
+
+REM 0) Перейти в проект
+cd /d "%ROOT%"
+
+REM 1) Попробовать поднять Docker compose (если Docker Engine не поднят, команда может упасть — это ок)
+cd /d "%ROOT%\infra"
+docker compose up -d >> "%LOG%" 2>&1
+
+REM 2) Подождать, пока Docker Engine/контейнер db реально станет доступен (до ~60 секунд)
+set /a tries=12
+:WAIT_DOCKER
+docker compose ps >> "%LOG%" 2>&1
+docker compose exec -T db psql -U app -d marketplace -P pager=off -c "select 1;" >> "%LOG%" 2>&1
+if %errorlevel%==0 goto DO_JOB
+
+set /a tries-=1
+if %tries% LEQ 0 goto FAIL_DOCKER
+
+timeout /t 5 /nobreak >nul
+goto WAIT_DOCKER
+
+:DO_JOB
+cd /d "%ROOT%"
+call "%ROOT%\.venv\Scripts\activate.bat" >> "%LOG%" 2>&1
+python "%ROOT%\app\jobs_wb_orders_raw_norm.py" >> "%LOG%" 2>&1
+
+echo ==== %date% %time% END OK ====>> "%LOG%"
+exit /b 0
+
+:FAIL_DOCKER
+echo ==== %date% %time% END FAIL: docker/db not ready ====>> "%LOG%"
+exit /b 1

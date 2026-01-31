@@ -1,0 +1,41 @@
+C:\marketplace-etl\run_wb_orders_hidden.ps1:59 знак:48
++ ... Text ("Р"Р?С'Р?Р?Р? OK Р·Р° {0:n0} С?РчРє." -f $sw.Elapsed.TotalSecon ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+В строке отсутствует завершающий символ: '.
+C:\marketplace-etl\run_wb_orders_hidden.ps1:59 знак:45
++ ... " -Text ("Р"Р?С'Р?Р?Р? OK Р·Р° {0:n0} С?РчРє." -f $sw.Elapsed.TotalSe ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Непредвиденная лексема "Р?С'Р?Р?Р? OK Р·Р° {0:n0} С?РчРє." -f $sw.Elapsed.TotalSeconds)
+    exit 0
+  } else {
+    Write-NotifyLog ("END FAIL exit={0} in {1:n0}s" -f $exit, $sw.Elapsed.TotalSeconds)
+    Show-Toast -Title "WB Orders" -Text ("Р?С?РёР+РєР°. Р?Р?Р? {0}. {1:n0} С?РчРє." -f $exit, 
+$sw.Elapsed.TotalSeconds)
+    exit $exit
+  }
+}
+catch {
+  $sw.Stop()
+  Write-NotifyLog ("END EXCEPTION in {0:n0}s: {1}" -f $sw.Elapsed.TotalSeconds, $_.Exception.Message)
+  Show-Toast -Title "WB Orders" -Text ("Р?С?РєР>С?С╪РчР?РёРч: " + $_.Exception.Message)
+  exit 1
+}
+" в выражении или операторе.
+C:\marketplace-etl\run_wb_orders_hidden.ps1:59 знак:45
++     Show-Toast -Title "WB Orders" -Text ("Р"Р?С'Р?Р?Р? OK Р·Р° {0:n0} ...
++                                             ~
+Отсутствует закрывающий знак ")" в выражении.
+C:\marketplace-etl\run_wb_orders_hidden.ps1:57 знак:20
++   if ($exit -eq 0) {
++                    ~
+Отсутствует закрывающий знак "}" в блоке операторов или определении типа.
+C:\marketplace-etl\run_wb_orders_hidden.ps1:51 знак:5
++ try {
++     ~
+Отсутствует закрывающий знак "}" в блоке операторов или определении типа.
+C:\marketplace-etl\run_wb_orders_hidden.ps1:73 знак:1
++ 
+В операторе Try отсутствует блок Catch или блок Finally.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : TerminatorExpectedAtEndOfString
+ 
