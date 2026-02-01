@@ -4,375 +4,279 @@ import logging
 import os
 import random
 import time
-from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any, Optional, cast
+from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-BASE_URL = "https://statistics-api.wildberries.ru"
-MAX_ROWS_PER_RESPONSE = 80000  # условный лимит ответа WB для flag=0
-
-# WB: лимит "1 запрос в минуту" для этих отчётов
-DEFAULT_MIN_INTERVAL_SEC = 61
-
-DEFAULT_CONNECT_TIMEOUT_SEC = 10
-DEFAULT_READ_TIMEOUT_SEC = 60
-DEFAULT_MAX_RETRIES = 5
-DEFAULT_MAX_BACKOFF_SEC = 60
-
 log = logging.getLogger(__name__)
 
+# WB Statistics API (Orders)
+DEFAULT_ORDERS_URL = "https://statistics-api.wildberries.ru/api/v1/supplier/orders"
 
-# ---------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------
 
-def _get_token() -> str:
-    token = (
-        os.getenv("WB_TOKEN", "").strip()
-        or os.getenv("WBTOKEN", "").strip()
-        or os.getenv("WB_API_KEY", "").strip()
-    )
+@dataclass(frozen=True)
+class WbOrdersClientConfig:
+    token: str
+    orders_url: str = DEFAULT_ORDERS_URL
+
+    # Пагинация:
+    # - strict_pagination=True: догружаем ТОЛЬКО если ответ опасно близко к лимиту (по порогу)
+    # - force_pagination=True: всегда пытаемся догрузить (для отладки)
+    strict_pagination: bool = True
+    force_pagination: bool = False
+    pagination_threshold: int = 79_000  # близко к лимиту 80k
+
+    # Ограничение WB: 1 запрос/мин на аккаунт (оставляем запас)
+    min_request_interval_sec: float = 61.0
+
+    # HTTP
+    http_timeout_sec: float = 30.0
+    http_max_retries: int = 6
+    http_backoff_base_sec: float = 1.5
+    http_backoff_max_sec: float = 30.0
+
+    # Защита от бесконечной пагинации
+    max_pages: int = 50
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_int(name: str, default: int, min_v: int, max_v: int) -> int:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        val = int(raw)
+    except Exception:
+        return default
+    return max(min_v, min(max_v, val))
+
+
+def _env_float(name: str, default: float, min_v: float, max_v: float) -> float:
+    raw = os.getenv(name)
+    if not raw:
+        return default
+    try:
+        val = float(raw)
+    except Exception:
+        return default
+    return max(min_v, min(max_v, val))
+
+
+def load_config() -> WbOrdersClientConfig:
+    # Ожидаем, что токен лежит в WB_TOKEN
+    token = (os.getenv("WB_TOKEN") or "").strip()
     if not token:
-        raise RuntimeError("WB_TOKEN не задан. Добавь WB_TOKEN=... в .env")
-    return token
+        raise RuntimeError("WB_TOKEN не задан. Добавь WB_TOKEN в .env (токен Statistics API).")
+
+    return WbOrdersClientConfig(
+        token=token,
+        orders_url=(os.getenv("WB_ORDERS_URL") or DEFAULT_ORDERS_URL).strip(),
+        strict_pagination=_env_bool("WB_STRICT_PAGINATION", True),
+        force_pagination=_env_bool("WB_FORCE_PAGINATION", False),
+        pagination_threshold=_env_int("WB_PAGINATION_THRESHOLD", 79_000, 1_000, 80_000),
+        min_request_interval_sec=_env_float("WB_MIN_REQUEST_INTERVAL_SEC", 61.0, 0.0, 600.0),
+        http_timeout_sec=_env_float("WB_HTTP_TIMEOUT_SEC", 30.0, 1.0, 300.0),
+        http_max_retries=_env_int("WB_HTTP_MAX_RETRIES", 6, 1, 20),
+        http_backoff_base_sec=_env_float("WB_HTTP_BACKOFF_BASE_SEC", 1.5, 0.1, 60.0),
+        http_backoff_max_sec=_env_float("WB_HTTP_BACKOFF_MAX_SEC", 30.0, 1.0, 600.0),
+        max_pages=_env_int("WB_MAX_PAGES", 50, 1, 500),
+    )
 
 
-def _auth_header_value(token: str) -> str:
+def _ensure_msk_tz(iso_str: str) -> str:
     """
-    По умолчанию используем как HeaderApiKey: Authorization: <token>.
-    Если нужно Bearer-схема, включи WB_AUTH_BEARER=1 или положи в WB_TOKEN уже 'Bearer ...'.
+    Если TZ не указан — WB трактует dateFrom как МСК.
+    Чтобы избежать сюрпризов, добавляем +03:00, если TZ нет.
     """
-    t = token.strip()
-    if not t:
-        return t
-
-    if t.lower().startswith("bearer "):
-        return t
-
-    bearer = (os.getenv("WB_AUTH_BEARER", "0").strip() == "1")
-    return f"Bearer {t}" if bearer else t
-
-
-def _headers() -> dict[str, str]:
-    return {"Authorization": _auth_header_value(_get_token())}
+    s = (iso_str or "").strip()
+    if not s:
+        return s
+    if s.endswith("Z"):
+        return s
+    # уже есть +HH:MM / -HH:MM
+    if len(s) >= 6 and (s[-6] in {"+", "-"}) and s[-3] == ":":
+        return s
+    return s + "+03:00"
 
 
-def _timeouts() -> tuple[float, float]:
-    connect = float(os.getenv("WB_CONNECT_TIMEOUT_SEC", str(DEFAULT_CONNECT_TIMEOUT_SEC)))
-    read = float(os.getenv("WB_READ_TIMEOUT_SEC", str(DEFAULT_READ_TIMEOUT_SEC)))
-    # safety: не даём нулевые/отрицательные значения
-    connect = connect if connect > 0 else float(DEFAULT_CONNECT_TIMEOUT_SEC)
-    read = read if read > 0 else float(DEFAULT_READ_TIMEOUT_SEC)
-    return connect, read
-
-
-def _max_retries() -> int:
-    try:
-        v = int(os.getenv("WB_HTTP_RETRIES", str(DEFAULT_MAX_RETRIES)))
-        return max(0, min(v, 20))
-    except Exception:
-        return DEFAULT_MAX_RETRIES
-
-
-def _min_interval_sec(explicit_sleep_sec: Optional[int] = None) -> int:
+def _sleep_for_rate_limit(last_ts: Optional[float], min_interval: float) -> float:
     """
-    Минимальный интервал между запросами (rate limit).
-    Можно переопределить:
-      - WB_MIN_INTERVAL_SEC
-      - параметром sleep_sec в iter_orders
+    Спим перед запросом, если не выдержан интервал.
+    Возвращаем timestamp момента выполнения запроса.
     """
-    base = int(os.getenv("WB_MIN_INTERVAL_SEC", str(DEFAULT_MIN_INTERVAL_SEC)))
-    base = max(0, min(base, 600))
+    now = time.time()
+    if last_ts is None or min_interval <= 0:
+        return now
 
-    if explicit_sleep_sec is None:
-        return base
-
-    try:
-        s = int(explicit_sleep_sec)
-        s = max(0, min(s, 600))
-        return max(base, s)
-    except Exception:
-        return base
+    elapsed = now - last_ts
+    wait = min_interval - elapsed
+    if wait > 0:
+        log.info("[WB] лимит 1 запрос/мин: сплю %.1f сек", wait)
+        time.sleep(wait)
+    return time.time()
 
 
-def _strict_pagination_default() -> bool:
-    return os.getenv("WB_STRICT_PAGINATION", "0").strip() == "1"
-
-
-def _max_pages_default() -> int:
-    try:
-        v = int(os.getenv("WB_MAX_PAGES", "5000"))
-        return max(1, min(v, 100000))
-    except Exception:
-        return 5000
-
-
-# ---------------------------------------------------------------------
-# Rate limiter (чтобы не ловить 429 и соблюдать 1 req/min)
-# ---------------------------------------------------------------------
-
-@dataclass
-class _RateLimiter:
-    next_allowed_at: float = 0.0  # time.monotonic()
-
-    def wait_turn(self, min_interval: int) -> None:
-        now = time.monotonic()
-        if now < self.next_allowed_at:
-            time.sleep(self.next_allowed_at - now)
-        # резервируем слот на следующий запрос
-        self.next_allowed_at = max(self.next_allowed_at, time.monotonic()) + float(min_interval)
-
-    def penalize(self, seconds: int) -> None:
-        if seconds <= 0:
-            return
-        self.next_allowed_at = max(self.next_allowed_at, time.monotonic() + float(seconds))
-
-
-_GLOBAL_RL = _RateLimiter()
-
-
-# ---------------------------------------------------------------------
-# 429 helpers
-# ---------------------------------------------------------------------
-
-def _parse_int_header(headers: Mapping[str, str], name: str) -> Optional[int]:
-    v = headers.get(name)
-    if v is None:
-        return None
-    try:
-        x = int(str(v).strip())
-        return x if x > 0 else None
-    except Exception:
-        return None
-
-
-def _wait_seconds_for_429(headers: Mapping[str, str]) -> int:
-    """
-    WB рекомендует использовать:
-      - X-Ratelimit-Retry (секунд до следующей попытки)
-      - X-Ratelimit-Reset (секунд до восстановления лимита)
-    Иногда встречается Retry-After.
-    Берём максимально безопасную задержку.
-    """
-    retry = _parse_int_header(headers, "X-Ratelimit-Retry")
-    if retry is None:
-        retry = _parse_int_header(headers, "Retry-After")
-
-    reset = _parse_int_header(headers, "X-Ratelimit-Reset")
-
-    candidates = [x for x in (retry, reset) if isinstance(x, int) and x > 0]
-    return max(candidates) if candidates else 60
-
-
-# ---------------------------------------------------------------------
-# HTTP request core
-# ---------------------------------------------------------------------
-
-def _request_json(
+def _request_json_list(
     session: requests.Session,
-    url: str,
-    params: dict[str, Any],
-    *,
-    min_interval: int,
-    rate_limiter: _RateLimiter,
-) -> list[dict[str, Any]]:
-    timeout = _timeouts()
-    retries = _max_retries()
+    cfg: WbOrdersClientConfig,
+    params: Dict[str, Any],
+    last_request_ts: Optional[float],
+) -> Tuple[List[Dict[str, Any]], float]:
+    """
+    Делает один запрос и возвращает (список строк, timestamp запроса).
+    """
+    # Лимит применяем перед первым запросом страницы (а не перед каждым retry)
+    request_ts = _sleep_for_rate_limit(last_request_ts, cfg.min_request_interval_sec)
 
-    for attempt in range(retries + 1):
-        # соблюдаем rate limit перед ЛЮБОЙ попыткой (включая ретраи)
-        rate_limiter.wait_turn(min_interval)
+    headers = {"Authorization": cfg.token}
+    url = cfg.orders_url
 
+    for attempt in range(1, cfg.http_max_retries + 1):
         try:
-            resp = session.get(
-                url,
-                headers=_headers(),
-                params=params,
-                timeout=timeout,
-            )
+            resp = session.get(url, headers=headers, params=params, timeout=cfg.http_timeout_sec)
         except requests.RequestException as e:
-            if attempt >= retries:
-                raise
-            wait = min(int((2 ** attempt)), DEFAULT_MAX_BACKOFF_SEC)
-            wait += random.randint(0, 3)  # jitter
-            log.warning("WB network error, retry in %ss: %r", wait, e)
+            wait = min(cfg.http_backoff_max_sec, cfg.http_backoff_base_sec * (2 ** (attempt - 1)))
+            wait += random.uniform(0.0, 1.0)
+            log.warning(
+                "[WB] ошибка сети (%s/%s): %s. Жду %.1f сек и повторяю.",
+                attempt,
+                cfg.http_max_retries,
+                str(e),
+                wait,
+            )
             time.sleep(wait)
             continue
 
-        resp_headers = cast(Mapping[str, str], resp.headers)
-
-        # 429: ждём как велит WB по заголовкам
-        if resp.status_code == 429:
-            wait = _wait_seconds_for_429(resp_headers)
-            rate_limiter.penalize(wait)
-            if attempt >= retries:
-                resp.raise_for_status()
-            log.warning("WB 429 rate limit, wait %ss then retry", wait)
-            continue
-
-        # 5xx: ретраим
-        if 500 <= resp.status_code <= 599:
-            if attempt >= retries:
-                resp.raise_for_status()
-            wait = min(int((2 ** attempt)), DEFAULT_MAX_BACKOFF_SEC)
-            wait += random.randint(0, 3)
-            log.warning("WB %s server error, retry in %ss", resp.status_code, wait)
-            time.sleep(wait)
-            continue
-
-        # 401/403/400/422 и т.п. — НЕ ретраим: это либо токен/права, либо неправильные параметры
-        if resp.status_code in (400, 401, 403, 422):
-            resp.raise_for_status()
-
-        resp.raise_for_status()
-
-        try:
+        if resp.status_code == 200:
             data = resp.json()
-        except ValueError as e:
-            if attempt >= retries:
-                raise RuntimeError(f"WB invalid JSON response: {repr(e)}") from e
-            wait = min(int((2 ** attempt)), DEFAULT_MAX_BACKOFF_SEC)
-            wait += random.randint(0, 3)
-            log.warning("WB invalid JSON, retry in %ss: %r", wait, e)
+            if not isinstance(data, list):
+                raise RuntimeError(f"WB вернул неожиданный JSON: {type(data)} (ожидали list).")
+            rows: List[Dict[str, Any]] = [x for x in data if isinstance(x, dict)]
+            return rows, request_ts
+
+        if resp.status_code == 401:
+            raise RuntimeError("WB: 401 Unauthorized. Проверь WB_TOKEN (Statistics API).")
+
+        if resp.status_code == 429:
+            retry_after = resp.headers.get("Retry-After")
+            wait = cfg.min_request_interval_sec
+            if retry_after:
+                try:
+                    wait = max(wait, float(retry_after))
+                except Exception:
+                    pass
+            log.warning("[WB] 429 Too Many Requests. Жду %.1f сек и повторяю.", wait)
             time.sleep(wait)
             continue
 
-        if not isinstance(data, list):
-            raise RuntimeError(f"WB unexpected response type: {type(data)}")
+        if 500 <= resp.status_code <= 599:
+            wait = min(cfg.http_backoff_max_sec, cfg.http_backoff_base_sec * (2 ** (attempt - 1)))
+            wait += random.uniform(0.0, 1.0)
+            log.warning(
+                "[WB] серверная ошибка %s (%s/%s). Жду %.1f сек и повторяю.",
+                resp.status_code,
+                attempt,
+                cfg.http_max_retries,
+                wait,
+            )
+            time.sleep(wait)
+            continue
 
-        return cast(list[dict[str, Any]], data)
+        body_preview = (resp.text or "")[:300].replace("\n", " ")
+        raise RuntimeError(f"WB: HTTP {resp.status_code}. Ответ: {body_preview}")
 
-    raise RuntimeError("WB request failed after retries")
-
-
-# ---------------------------------------------------------------------
-# Public API: Orders
-# ---------------------------------------------------------------------
-
-def fetch_orders_page(
-    date_from_iso: str,
-    flag: int = 0,
-    session: requests.Session | None = None,
-) -> list[dict[str, Any]]:
-    url = f"{BASE_URL}/api/v1/supplier/orders"
-    params: dict[str, Any] = {"dateFrom": date_from_iso, "flag": flag}
-
-    if session is None:
-        with requests.Session() as sess:
-            return _request_json(sess, url, params, min_interval=_min_interval_sec(), rate_limiter=_GLOBAL_RL)
-
-    return _request_json(session, url, params, min_interval=_min_interval_sec(), rate_limiter=_GLOBAL_RL)
+    raise RuntimeError("WB: превышено число попыток запроса (network/5xx/429).")
 
 
 def iter_orders(
     date_from_iso: str,
     flag: int = 0,
-    sleep_sec: int = DEFAULT_MIN_INTERVAL_SEC,
-    session: requests.Session | None = None,
-    *,
-    strict: Optional[bool] = None,
-    max_pages: Optional[int] = None,
-) -> Iterator[list[dict[str, Any]]]:
+    session: Optional[requests.Session] = None,
+) -> List[Dict[str, Any]]:
     """
-    Итерируем страницы отчёта Orders.
+    Загружает заказы WB, начиная с date_from_iso.
 
-    Быстрый режим (по умолчанию):
-      - если пришло < 80000 строк, считаем что WB отдал всё за этот диапазон, выходим.
-      - это критично для скорости, потому что лимит 1 запрос/мин.
+    Пагинация:
+      - если WB_FORCE_PAGINATION=1 -> всегда пробуем догружать
+      - иначе если WB_STRICT_PAGINATION=1 и len(rows) >= WB_PAGINATION_THRESHOLD -> догружаем
 
-    Строгий режим (strict=True или WB_STRICT_PAGINATION=1):
-      - продолжаем ходить по страницам до пустого массива [] (или пока курсор не перестанет двигаться).
-      - использовать для backfill, когда важнее полнота, чем скорость.
+    Важно: при flag=0 WB использует lastChangeDate >= dateFrom (включительно),
+    поэтому дубликаты на границе — нормальны (их должна убирать БД).
     """
+    cfg = load_config()
+
+    if flag not in (0, 1):
+        raise ValueError("flag должен быть 0 или 1")
+
+    params: Dict[str, Any] = {"dateFrom": _ensure_msk_tz(date_from_iso)}
+    if flag != 0:
+        params["flag"] = str(flag)
+
     own_session = session is None
     sess = session or requests.Session()
 
-    if strict is None:
-        strict = _strict_pagination_default()
-    max_pages_eff = max_pages if isinstance(max_pages, int) else _max_pages_default()
-    max_pages_eff = max(1, min(max_pages_eff, 100000))
-
-    cursor = date_from_iso
+    all_rows: List[Dict[str, Any]] = []
     page = 1
-
-    min_interval = _min_interval_sec(sleep_sec)
-    rl = _GLOBAL_RL
+    last_request_ts: Optional[float] = None
 
     try:
         while True:
-            log.info("[WB] page=%s dateFrom=%s", page, cursor)
+            log.info("[WB] страница=%s dateFrom=%s", page, params["dateFrom"])
 
-            chunk = _request_json(
-                sess,
-                f"{BASE_URL}/api/v1/supplier/orders",
-                {"dateFrom": cursor, "flag": flag},
-                min_interval=min_interval,
-                rate_limiter=rl,
-            )
+            rows, last_request_ts = _request_json_list(sess, cfg, params, last_request_ts)
+            log.info("[WB] страница=%s строк=%s", page, len(rows))
 
-            log.info("[WB] page=%s rows=%s", page, len(chunk))
-            yield chunk
-
-            if not chunk:
+            if not rows:
                 break
 
-            last = chunk[-1]
-            new_cursor_any = last.get("lastChangeDate") or last.get("date")
-            if not new_cursor_any:
-                log.warning("[WB] stop: last record has no lastChangeDate/date")
+            all_rows.extend(rows)
+
+            need_next = False
+            if cfg.force_pagination:
+                need_next = True
+                log.info("[WB] пагинация: принудительно (WB_FORCE_PAGINATION=1)")
+            elif cfg.strict_pagination and len(rows) >= cfg.pagination_threshold:
+                need_next = True
+                log.info(
+                    "[WB] пагинация: строк=%s >= порога=%s (риск лимита 80k)",
+                    len(rows),
+                    cfg.pagination_threshold,
+                )
+
+            if not need_next:
                 break
 
-            new_cursor = str(new_cursor_any)
-
-            # защита от бесконечного цикла
-            if new_cursor == str(cursor):
-                log.warning("[WB] stop: cursor not advancing (new_cursor=%s)", new_cursor)
+            last_change = rows[-1].get("lastChangeDate")
+            if not last_change:
+                log.warning("[WB] пагинация: нет lastChangeDate в последней строке — стоп.")
                 break
 
-            # быстрый выход: если меньше лимита — обычно больше данных нет
-            if (not strict) and (len(chunk) < MAX_ROWS_PER_RESPONSE):
+            next_date_from = _ensure_msk_tz(str(last_change))
+
+            # Из-за >= WB может вернуть ту же последнюю строку ещё раз.
+            # Если курсор не двигается — останавливаемся, чтобы не зациклиться.
+            if next_date_from == str(params["dateFrom"]):
+                log.warning(
+                    "[WB] пагинация: курсор не двигается (lastChangeDate >= dateFrom). "
+                    "Останавливаюсь, чтобы не зациклиться. Дубликаты уберёт БД, lookback защитит от пропусков."
+                )
                 break
 
-            cursor = new_cursor
+            params["dateFrom"] = next_date_from
             page += 1
 
-            if page > max_pages_eff:
-                log.warning("[WB] stop: max_pages reached (%s)", max_pages_eff)
+            if page > cfg.max_pages:
+                log.warning("[WB] пагинация: достигнут лимит страниц WB_MAX_PAGES=%s — стоп.", cfg.max_pages)
                 break
 
+        return all_rows
     finally:
         if own_session:
             sess.close()
-
-
-def fetch_orders_incremental(
-    date_from_iso: str,
-    flag: int = 0,
-    sleep_sec: int = DEFAULT_MIN_INTERVAL_SEC,
-    *,
-    strict: Optional[bool] = None,
-) -> tuple[list[dict[str, Any]], str]:
-    all_rows: list[dict[str, Any]] = []
-    last_cursor_seen = date_from_iso
-
-    with requests.Session() as sess:
-        for chunk in iter_orders(
-            date_from_iso,
-            flag=flag,
-            sleep_sec=sleep_sec,
-            session=sess,
-            strict=strict,
-        ):
-            if not chunk:
-                break
-
-            all_rows.extend(chunk)
-
-            last = chunk[-1]
-            c = last.get("lastChangeDate") or last.get("date")
-            if c:
-                last_cursor_seen = str(c)
-
-    return all_rows, last_cursor_seen

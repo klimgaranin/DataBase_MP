@@ -1,0 +1,19 @@
+[
+  "requirements.txt",
+  ".gitignore",
+
+  "app",
+  "app/db.py",
+  "app/jobs_wb_orders_raw_norm.py",
+  "app/clients/wb_statistics.py",
+
+  "migrations",
+
+  "infra",
+
+  "tools",
+
+  "run_wb_orders.cmd",
+  "run_wb_orders_hidden.ps1",
+  "run_hidden.vbs"
+]

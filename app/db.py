@@ -1,369 +1,297 @@
-from __future__ import annotations
-
 import os
 import re
-import json
-from datetime import datetime
-from typing import Dict, Optional, Any, Iterable, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import psycopg2
 from psycopg2.extras import execute_values
 
 
-# ---------------------------------------------------------------------
-# DSN
-# ---------------------------------------------------------------------
-
 def get_dsn() -> str:
+    """Builds a psycopg2 DSN string from env vars.
+
+    Priority:
+      1) PG_DSN (full DSN string)
+      2) PG_HOST/PG_PORT/PG_DB/PG_USER/PG_PASSWORD
     """
-    ЕДИНАЯ точка получения DSN.
-    Поддерживаем PG_DSN и старый PGDSN (на переходный период).
+    raw = os.environ.get("PG_DSN", "").strip()
+    if raw:
+        # Support URL or key=val style. psycopg2 accepts both.
+        return raw
+
+    host = os.environ.get("PG_HOST", "localhost")
+    port = os.environ.get("PG_PORT", "5432")
+    db = os.environ.get("PG_DB", "marketplace")
+    user = os.environ.get("PG_USER", "app")
+    password = os.environ.get("PG_PASSWORD", "")
+
+    def q(v: str) -> str:
+        # Quote if contains spaces or special chars; escape quotes
+        if re.search(r"\s|['\"\\]", v):
+            v = v.replace("\\", "\\\\").replace('"', '\\"')
+            return f'"{v}"'
+        return v
+
+    parts = [
+        f"host={q(host)}",
+        f"port={q(port)}",
+        f"dbname={q(db)}",
+        f"user={q(user)}",
+    ]
+    if password:
+        parts.append(f"password={q(password)}")
+    return " ".join(parts)
+
+
+def _connect():
+    """Единая точка подключения к Postgres.
+
+    Зачем:
+    - Чтобы не дублировать psycopg2.connect(...) по всему проекту.
+    - Чтобы гарантированно был connect_timeout (на Windows + Docker это критично).
     """
-    dsn = (os.getenv("PG_DSN") or "").strip()
-    if dsn:
-        return dsn
-
-    dsn = (os.getenv("PGDSN") or "").strip()
-    if dsn:
-        return dsn
-
-    return "postgresql://app:app_password@localhost:5432/marketplace"
+    return psycopg2.connect(get_dsn(), connect_timeout=10)
 
 
-# ---------------------------------------------------------------------
-# Safety helpers (защита от SQL-инъекций через имена таблиц)
-# ---------------------------------------------------------------------
-
-_IDENTIFIER_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_\.]*$")
-
-
-def _assert_safe_identifier(name: str) -> str:
-    if not name or not _IDENTIFIER_RE.match(name):
-        raise ValueError(f"Unsafe SQL identifier: {name!r}")
-    return name
+def create_extension_if_needed() -> None:
+    with _connect() as conn:
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto;")
 
 
-# ---------------------------------------------------------------------
-# WB time parsing
-# WB: если TZ не указан — считаем Московское время (UTC+3)
-# ---------------------------------------------------------------------
-
-def _ensure_wb_tz(iso_str: str) -> str:
-    s = (iso_str or "").strip()
-    if not s:
-        return s
-
-    if s.endswith("Z"):
-        return s  # UTC
-
-    # уже есть +03:00 / -05:00 (RFC3339)
-    if len(s) >= 6 and (s[-6] in ["+", "-"]) and s[-3] == ":":
-        return s
-
-    # нет TZ -> считаем как MSK (UTC+3)
-    return s + "+03:00"
+def exec_sql(sql: str) -> None:
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql)
 
 
-def _parse_wb_dt(iso_str: str) -> Optional[datetime]:
-    s = _ensure_wb_tz(iso_str)
-    if not s:
-        return None
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except Exception:
-        return None
+def load_migrations() -> None:
+    """Creates basic schema if missing."""
+    create_extension_if_needed()
 
+    sql = """
+    CREATE TABLE IF NOT EXISTS meta_job_state (
+      job_name TEXT PRIMARY KEY,
+      cursor_iso TEXT NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
-# ---------------------------------------------------------------------
-# Cursor fetch helpers (чтобы Pylance НЕ ругался никогда)
-# ---------------------------------------------------------------------
+    CREATE TABLE IF NOT EXISTS wb_orders_raw (
+      id BIGSERIAL PRIMARY KEY,
+      srid TEXT NOT NULL,
+      last_change_ts TIMESTAMPTZ NOT NULL,
+      payload JSONB NOT NULL,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
 
-def _fetchone_bool(cur) -> bool:
+    -- Raw versions deduplicated by (srid, last_change_ts)
+    CREATE TABLE IF NOT EXISTS wb_orders_raw_dedup (
+      id BIGSERIAL PRIMARY KEY,
+      srid TEXT NOT NULL,
+      last_change_ts TIMESTAMPTZ NOT NULL,
+      payload JSONB NOT NULL,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (srid, last_change_ts)
+    );
+
+    -- Normalized table
+    CREATE TABLE IF NOT EXISTS wb_orders_norm (
+      srid TEXT PRIMARY KEY,
+      order_id BIGINT NULL,
+      nm_id BIGINT NULL,
+      supplier_article TEXT NULL,
+      warehouse_name TEXT NULL,
+      date DATE NULL,
+      date_ts TIMESTAMPTZ NULL,
+      last_change_ts TIMESTAMPTZ NOT NULL,
+      price_with_disc NUMERIC NULL,
+      is_cancel BOOLEAN NOT NULL DEFAULT FALSE,
+      cancel_dt DATE NULL,
+      cancel_ts TIMESTAMPTZ NULL,
+      inserted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_wb_orders_raw_srid ON wb_orders_raw (srid);
+    CREATE INDEX IF NOT EXISTS idx_wb_orders_raw_last_change_ts ON wb_orders_raw (last_change_ts);
+
+    CREATE INDEX IF NOT EXISTS idx_wb_orders_raw_dedup_srid ON wb_orders_raw_dedup (srid);
+    CREATE INDEX IF NOT EXISTS idx_wb_orders_raw_dedup_last_change_ts ON wb_orders_raw_dedup (last_change_ts);
+
+    CREATE INDEX IF NOT EXISTS idx_wb_orders_norm_last_change_ts ON wb_orders_norm (last_change_ts);
     """
-    Безопасно достаёт bool из SELECT ...;
-    Никогда не делает row[0] без проверки row is None.
-    """
-    row = cur.fetchone()
-    if row is None:
-        return False
-    # row обычно tuple длины 1
-    try:
-        return bool(row[0])
-    except Exception:
-        return False
+    exec_sql(sql)
 
 
-def _fetchone_scalar(cur) -> Optional[Any]:
-    """
-    Возвращает первое поле первой строки или None.
-    """
-    row = cur.fetchone()
-    if row is None:
-        return None
-    try:
-        return row[0]
-    except Exception:
-        return None
+def get_job_cursor(job_name: str) -> Optional[str]:
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT cursor_iso FROM meta_job_state WHERE job_name=%s", (job_name,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            return str(row[0])
 
 
-# ---------------------------------------------------------------------
-# DB writes
-# ---------------------------------------------------------------------
-
-def insert_raw(table: str, payload: dict) -> None:
-    """
-    Универсальная вставка raw-json (в таблицу с колонкой payload jsonb).
-    """
-    table = _assert_safe_identifier(table)
-    dsn = get_dsn()
-    with psycopg2.connect(dsn) as conn:
+def set_job_cursor(job_name: str, cursor_iso: str) -> None:
+    with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                f"insert into {table} (payload) values (%s::jsonb)",
-                [json.dumps(payload, ensure_ascii=False)],
+                """
+                INSERT INTO meta_job_state (job_name, cursor_iso)
+                VALUES (%s, %s)
+                ON CONFLICT (job_name) DO UPDATE
+                  SET cursor_iso=EXCLUDED.cursor_iso,
+                      updated_at=NOW()
+                """,
+                (job_name, cursor_iso),
             )
 
 
-def _chunks(lst: List[Tuple[Any, ...]], size: int) -> Iterable[List[Tuple[Any, ...]]]:
-    for i in range(0, len(lst), size):
-        yield lst[i:i + size]
-
-
-def insert_wb_orders_raw_dedup(rows: List[dict], page_size: int = 1000) -> int:
-    """
-    Возвращает сколько реально вставилось новых версий (dedup).
-    Dedup: primary key (srid, last_change_ts) + ON CONFLICT DO NOTHING.
-    """
+def insert_wb_orders_raw(rows: List[Dict[str, Any]]) -> int:
     if not rows:
         return 0
 
-    values: List[Tuple[str, datetime, str]] = []
+    values: List[Tuple[str, str, Any]] = []
     for r in rows:
-        srid = r.get("srid")
-        if not srid:
+        srid = str(r.get("srid") or "").strip()
+        last_change = r.get("lastChangeDate") or r.get("lastChangeTs") or r.get("last_change_ts")
+        if not srid or not last_change:
             continue
-
-        lch = r.get("lastChangeDate") or r.get("date")
-        dt = _parse_wb_dt(str(lch)) if lch else None
-        if not dt:
-            continue
-
-        values.append((str(srid), dt, json.dumps(r, ensure_ascii=False)))
+        values.append((srid, str(last_change), r))
 
     if not values:
         return 0
 
-    sql = """
-    insert into wb_orders_raw_dedup (srid, last_change_ts, payload)
-    values %s
-    on conflict (srid, last_change_ts) do nothing
-    """
-
-    inserted_total = 0
-    dsn = get_dsn()
-    with psycopg2.connect(dsn) as conn:
+    with _connect() as conn:
         with conn.cursor() as cur:
-            for page in _chunks(values, page_size):
-                execute_values(cur, sql, page, page_size=len(page))
-                # rowcount у psycopg2 для INSERT обычно корректный
-                inserted_total += int(cur.rowcount)
-
-    return inserted_total
-
-
-def cleanup_wb_orders_raw_dedup(days: int = 14) -> int:
-    dsn = get_dsn()
-    with psycopg2.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "delete from wb_orders_raw_dedup where loaded_at < now() - (%s || ' days')::interval;",
-                [days],
+            execute_values(
+                cur,
+                """
+                INSERT INTO wb_orders_raw (srid, last_change_ts, payload)
+                VALUES %s
+                """,
+                values,
+                page_size=1000,
             )
-            return int(cur.rowcount)
+        return len(values)
 
 
-def upsert_wb_orders_norm(rows: List[dict]) -> None:
+def insert_wb_orders_raw_dedup(rows: List[Dict[str, Any]]) -> int:
     if not rows:
-        return
+        return 0
+
+    values: List[Tuple[str, str, Any]] = []
+    for r in rows:
+        srid = str(r.get("srid") or "").strip()
+        last_change = r.get("lastChangeDate") or r.get("lastChangeTs") or r.get("last_change_ts")
+        if not srid or not last_change:
+            continue
+        values.append((srid, str(last_change), r))
+
+    if not values:
+        return 0
+
+    with _connect() as conn:
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
+                """
+                INSERT INTO wb_orders_raw_dedup (srid, last_change_ts, payload)
+                VALUES %s
+                ON CONFLICT (srid, last_change_ts) DO NOTHING
+                """,
+                values,
+                page_size=1000,
+            )
+        return len(values)
+
+
+def upsert_wb_orders_norm(rows: List[Dict[str, Any]]) -> int:
+    if not rows:
+        return 0
 
     cols = [
-        "srid", "is_cancel", "date_ts", "last_change_ts",
-        "warehouse_name", "warehouse_type", "country_name", "oblast_okrug_name", "region_name",
-        "supplier_article", "nm_id", "barcode", "category", "subject", "brand", "tech_size",
-        "income_id", "is_supply", "is_realization", "total_price", "discount_percent", "spp",
-        "finished_price", "price_with_disc", "cancel_date", "sticker", "g_number"
+        "srid",
+        "order_id",
+        "nm_id",
+        "supplier_article",
+        "warehouse_name",
+        "date",
+        "date_ts",
+        "last_change_ts",
+        "price_with_disc",
+        "is_cancel",
+        "cancel_dt",
+        "cancel_ts",
     ]
 
-    values = [[r.get(c) for c in cols] for r in rows]
+    values: List[Tuple[Any, ...]] = []
+    for r in rows:
+        values.append(tuple(r.get(c) for c in cols))
 
-    sql = f"""
-    insert into wb_orders_norm ({",".join(cols)})
-    values %s
-    on conflict (srid) do update set
-      is_cancel=excluded.is_cancel,
-      date_ts=excluded.date_ts,
-      last_change_ts=excluded.last_change_ts,
-      warehouse_name=excluded.warehouse_name,
-      warehouse_type=excluded.warehouse_type,
-      country_name=excluded.country_name,
-      oblast_okrug_name=excluded.oblast_okrug_name,
-      region_name=excluded.region_name,
-      supplier_article=excluded.supplier_article,
-      nm_id=excluded.nm_id,
-      barcode=excluded.barcode,
-      category=excluded.category,
-      subject=excluded.subject,
-      brand=excluded.brand,
-      tech_size=excluded.tech_size,
-      income_id=excluded.income_id,
-      is_supply=excluded.is_supply,
-      is_realization=excluded.is_realization,
-      total_price=excluded.total_price,
-      discount_percent=excluded.discount_percent,
-      spp=excluded.spp,
-      finished_price=excluded.finished_price,
-      price_with_disc=excluded.price_with_disc,
-      cancel_date=excluded.cancel_date,
-      sticker=excluded.sticker,
-      g_number=excluded.g_number,
-      loaded_at=now()
-    """
-
-    dsn = get_dsn()
-    with psycopg2.connect(dsn) as conn:
+    with _connect() as conn:
         with conn.cursor() as cur:
-            execute_values(cur, sql, values, page_size=1000)
+            execute_values(
+                cur,
+                f"""
+                INSERT INTO wb_orders_norm ({", ".join(cols)})
+                VALUES %s
+                ON CONFLICT (srid) DO UPDATE SET
+                  order_id=EXCLUDED.order_id,
+                  nm_id=EXCLUDED.nm_id,
+                  supplier_article=EXCLUDED.supplier_article,
+                  warehouse_name=EXCLUDED.warehouse_name,
+                  date=EXCLUDED.date,
+                  date_ts=EXCLUDED.date_ts,
+                  last_change_ts=EXCLUDED.last_change_ts,
+                  price_with_disc=EXCLUDED.price_with_disc,
+                  is_cancel=EXCLUDED.is_cancel,
+                  cancel_dt=EXCLUDED.cancel_dt,
+                  cancel_ts=EXCLUDED.cancel_ts,
+                  updated_at=NOW()
+                """,
+                values,
+                page_size=1000,
+            )
+        return len(values)
 
 
-def get_job_cursor(job_name: str) -> Optional[str]:
-    dsn = get_dsn()
-    with psycopg2.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute("select cursor from job_state where job_name=%s", [job_name])
-            val = _fetchone_scalar(cur)
-            return str(val) if val is not None else None
-
-
-def set_job_cursor(job_name: str, cursor: str) -> None:
-    dsn = get_dsn()
-    with psycopg2.connect(dsn) as conn:
+def cleanup_wb_orders_raw_dedup(days: int = 30) -> int:
+    with _connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
-                """
-                insert into job_state (job_name, cursor, updated_at)
-                values (%s, %s, now())
-                on conflict (job_name) do update set
-                  cursor=excluded.cursor,
-                  updated_at=now()
-                """,
-                [job_name, cursor],
+                "DELETE FROM wb_orders_raw_dedup WHERE inserted_at < NOW() - (%s || ' days')::interval",
+                (days,),
             )
+            return cur.rowcount
 
 
-def insert_job_run(
-    job_name: str,
-    started_at_iso: str,
-    finished_at_iso: str,
-    status: str,
-    api_rows: int,
-    raw_new_versions: int,
-    norm_upserted: int,
-    duplicates: int,
-    dup_pct: float,
-    cursor_old: Optional[str],
-    cursor_used: Optional[str],
-    cursor_new: Optional[str],
-    error: Optional[str],
-) -> None:
-    dsn = get_dsn()
-    with psycopg2.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                insert into job_runs (
-                  job_name, started_at, finished_at, status,
-                  api_rows, raw_new_versions, norm_upserted,
-                  duplicates, dup_pct,
-                  cursor_old, cursor_used, cursor_new, error
-                )
-                values (%s, %s::timestamptz, %s::timestamptz, %s,
-                        %s, %s, %s,
-                        %s, %s,
-                        %s, %s, %s, %s)
-                """,
-                [
-                    job_name, started_at_iso, finished_at_iso, status,
-                    int(api_rows), int(raw_new_versions), int(norm_upserted),
-                    int(duplicates), float(dup_pct),
-                    cursor_old, cursor_used, cursor_new, error
-                ],
-            )
+# Advisory lock: one process at a time
+_LOCK_CONNS: Dict[int, Any] = {}
 
 
-# ---------------------------------------------------------------------
-# Advisory lock (КРИТИЧЕСКИ ВАЖНО)
-# Lock сессионный -> держим ОТКРЫТОЕ соединение до конца job
-# ---------------------------------------------------------------------
-
-_LOCK_CONNS: Dict[int, psycopg2.extensions.connection] = {}
-
-
-def try_advisory_lock(lock_id: int) -> bool:
-    """
-    Берём pg_try_advisory_lock(lock_id) и ДЕРЖИМ соединение открытым.
-    Если соединение закрыть — lock пропадает.
-    """
-    if lock_id in _LOCK_CONNS:
-        return True
-
-    dsn = get_dsn()
-    conn = psycopg2.connect(dsn)
+def acquire_job_lock(lock_key: int) -> bool:
+    # Keep connection open while holding the lock
+    conn = _connect()
     conn.autocommit = True
-
-    try:
-        with conn.cursor() as cur:
-            cur.execute("select pg_try_advisory_lock(%s);", [lock_id])
-            ok = _fetchone_bool(cur)
-
+    with conn.cursor() as cur:
+        cur.execute("SELECT pg_try_advisory_lock(%s)", (lock_key,))
+        ok = bool(cur.fetchone()[0])
         if ok:
-            _LOCK_CONNS[lock_id] = conn
+            _LOCK_CONNS[lock_key] = conn
             return True
-
-        conn.close()
-        return False
-
-    except Exception:
-        conn.close()
-        raise
+    conn.close()
+    return False
 
 
-def advisory_unlock(lock_id: int) -> None:
-    """
-    Освобождаем lock тем же соединением, на котором брали.
-    Если соединения нет — best-effort unlock (не валим job).
-    """
-    conn = _LOCK_CONNS.pop(lock_id, None)
-
-    if conn is None:
-        # best-effort
-        try:
-            dsn = get_dsn()
-            tmp = psycopg2.connect(dsn)
-            tmp.autocommit = True
-            try:
-                with tmp.cursor() as cur:
-                    cur.execute("select pg_advisory_unlock(%s);", [lock_id])
-                    _ = _fetchone_bool(cur)
-            finally:
-                tmp.close()
-        except Exception:
-            pass
+def release_job_lock(lock_key: int) -> None:
+    conn = _LOCK_CONNS.pop(lock_key, None)
+    if not conn:
         return
-
     try:
         conn.autocommit = True
         with conn.cursor() as cur:
-            cur.execute("select pg_advisory_unlock(%s);", [lock_id])
-            _ = _fetchone_bool(cur)
+            cur.execute("SELECT pg_advisory_unlock(%s)", (lock_key,))
     finally:
         conn.close()
