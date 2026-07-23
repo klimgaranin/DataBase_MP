@@ -48,6 +48,9 @@ Desktop.ini
 .env
 .venv/
 logs/
+evidence/
+archive/
+local/
 secrets/
 *.key
 *.pem

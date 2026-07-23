@@ -221,5 +221,8 @@ def tg_send(text: str, *, logger: Optional[logging.Logger] = None) -> None:
             timeout=10,
         )
         resp.raise_for_status()
-    except Exception as e:
-        _log.warning("tg_send failed: %s", e)
+    except requests.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else "unknown"
+        _log.warning("tg_send failed: HTTP status=%s", status)
+    except Exception as exc:
+        _log.warning("tg_send failed: %s", type(exc).__name__)

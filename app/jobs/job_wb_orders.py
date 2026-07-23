@@ -9,11 +9,8 @@ from __future__ import annotations
 import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
-
-import requests
+from typing import Optional
 
 # ── bootstrap: sys.path + .env ───────────────────────────────────────────────
 _THIS = Path(__file__).resolve()
@@ -22,8 +19,7 @@ sys.path.insert(0, str(_THIS.parent.parent.parent))   # DataBase_MP/
 
 from app.utils import (
     setup_sys_path, load_env, setup_logging, tg_send,
-    now_iso_utc, now_msk_label,
-    ensure_tz, parse_iso_dt, first_run_cursor,
+    now_iso_utc, now_msk_label, first_run_cursor,
 )
 
 setup_sys_path(__file__)
@@ -43,6 +39,12 @@ from app.db import (
     advisory_unlock,
 )
 from app.normalize.norm_wb_orders import normalize_wb_order
+from app.jobs.wb_orders_logic import (
+    apply_lookback as _apply_lookback,
+    calc_lookback as _calc_lookback,
+    dedupe_by_srid as _dedupe_by_srid,
+    max_cursor_from_rows as _max_cursor_from_rows,
+)
 
 # ── константы ─────────────────────────────────────────────────────────────────
 JOB_NAME = "wb_orders"
@@ -65,68 +67,6 @@ def _load_job_config() -> dict:
         debug_sleep=debug_sleep,
         log_file=log_file,
     )
-
-
-# ── lookback-логика ───────────────────────────────────────────────────────────
-def _calc_lookback(cursor_old_iso: str, last_dup_pct: Optional[float],
-                   base: int, max_look: int) -> int:
-    dt_old = parse_iso_dt(cursor_old_iso)
-    if dt_old is None:
-        return base
-    gap_min = max(int((datetime.now(dt_old.tzinfo or timezone.utc) - dt_old).total_seconds() // 60), 0)
-
-    if   gap_min <= 20:  look = min(base, 2)
-    elif gap_min <= 60:  look = min(base, 5)
-    elif gap_min <= 360: look = min(base, 10)
-    else:                look = min(max_look, max(base, 15))
-
-    if last_dup_pct is not None:
-        if   last_dup_pct >= 30.0: look = min(look, 2)
-        elif last_dup_pct >= 15.0: look = min(look, 5)
-        elif last_dup_pct <= 3.0:  look = min(max_look, look + 5)
-        elif last_dup_pct <= 7.0:  look = min(max_look, look + 2)
-
-    return max(0, int(look))
-
-
-def _apply_lookback(cursor_old_iso: str, minutes: int) -> str:
-    dt = parse_iso_dt(cursor_old_iso)
-    if dt is None:
-        return ensure_tz(cursor_old_iso)
-    return (dt - timedelta(minutes=max(0, minutes))).replace(microsecond=0).isoformat()
-
-
-def _max_cursor_from_rows(rows: list[dict[str, Any]], fallback: str) -> str:
-    best_dt: Optional[datetime] = None
-    best_raw: Optional[str]     = None
-    for r in rows:
-        c = r.get("lastChangeDate") or r.get("date")
-        if not c:
-            continue
-        dt = parse_iso_dt(str(c))
-        if dt and (best_dt is None or dt > best_dt):
-            best_dt  = dt
-            best_raw = str(c)
-    return ensure_tz(best_raw) if best_raw else ensure_tz(fallback)
-
-
-def _dedupe_by_srid(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    best: dict[str, tuple[datetime, dict[str, Any]]] = {}
-    for r in rows:
-        srid = r.get("srid")
-        if not srid:
-            continue
-        c = r.get("lastChangeDate") or r.get("date")
-        if not c:
-            continue
-        dt = parse_iso_dt(str(c))
-        if dt is None:
-            continue
-        key  = str(srid)
-        prev = best.get(key)
-        if prev is None or dt > prev[0]:
-            best[key] = (dt, r)
-    return [pair[1] for pair in best.values()]
 
 
 # ── main ──────────────────────────────────────────────────────────────────────
