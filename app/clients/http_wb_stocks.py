@@ -9,13 +9,14 @@ Data updated every 30 min.
 from __future__ import annotations
 
 import logging
-import os
 import random
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
+
+from app.secrets import get_secret
 
 log = logging.getLogger("wb_stocks")
 
@@ -38,10 +39,10 @@ class WbStocksConfig:
 
 
 def load_config() -> WbStocksConfig:
-    token = (os.getenv("WB_TOKEN") or "").strip()
+    token = (get_secret("WB_TOKEN") or "").strip()
     if not token:
         raise RuntimeError(
-            "WB_TOKEN ne zadan v .env -- nuzhen token kategorii Analitika."
+            "WB_TOKEN ne zadan -- nuzhen token kategorii Analitika."
         )
     return WbStocksConfig(token=token)
 

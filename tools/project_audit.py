@@ -39,6 +39,7 @@ REQUIRED_CORE_FILES = [
     "app/ops/health.py",
     "app/ops/jobs_status.py",
     "app/ops/migrations.py",
+    "app/ops/secrets.py",
     "migrations/V11__source_statistics_ingestion.sql",
     "migrations/V12__ozon_api_orders.sql",
     "migrations/V13__ozon_stocks_and_placement.sql",

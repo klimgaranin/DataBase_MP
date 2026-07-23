@@ -13,11 +13,12 @@ Rate limit /adv/v3/fullstats: 3 запроса/мин, интервал 21 се�
 from __future__ import annotations
 
 import logging
-import os
 import time
 from typing import Any, Callable
 
 import requests
+
+from app.secrets import get_secret
 
 _ADV_BASE            = "https://advert-api.wildberries.ru"
 _FULLSTATS_BATCH     = 50
@@ -28,9 +29,9 @@ log = logging.getLogger(__name__)
 
 
 def _headers() -> dict[str, str]:
-    token = os.getenv("WB_TOKEN_CONTENT", "").strip()
+    token = (get_secret("WB_TOKEN_CONTENT") or "").strip()
     if not token:
-        raise RuntimeError("WB_TOKEN_CONTENT не задан в .env")
+        raise RuntimeError("WB_TOKEN_CONTENT не задан")
     return {"Authorization": token}
 
 

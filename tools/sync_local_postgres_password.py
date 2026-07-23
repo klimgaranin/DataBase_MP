@@ -3,10 +3,12 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 import shlex
+import sys
 from urllib.parse import unquote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 
 def _read_env() -> dict[str, str]:
@@ -52,10 +54,13 @@ def _dsn_parts(dsn: str) -> dict[str, str]:
 
 
 def main() -> int:
+    from app.secrets import get_secret
+
     env = _read_env()
-    parts = _dsn_parts(env.get("PG_DSN", ""))
+    dsn = get_secret("PG_DSN") or env.get("PG_DSN", "")
+    parts = _dsn_parts(dsn)
     user = parts["user"]
-    password = parts["password"] or env.get("POSTGRES_PASSWORD", "")
+    password = get_secret("POSTGRES_PASSWORD") or parts["password"] or env.get("POSTGRES_PASSWORD", "")
     database = parts["database"]
     if not password:
         raise SystemExit("PG_DSN/POSTGRES_PASSWORD не содержат пароль")

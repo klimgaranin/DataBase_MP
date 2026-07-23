@@ -248,6 +248,12 @@ Register-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Stocks_Sync" `
 .\.venv\Scripts\python.exe -m app.cli jobs-status --limit 10
 ```
 
+Проверить, какие секреты видит проект:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli secrets status
+```
+
 Файлы `tools\health_check.py` и `tools\apply_migrations.py` оставлены как
 совместимые ярлыки для старых инструкций. Основная логика находится в `app\ops`.
 
@@ -373,7 +379,7 @@ set OZON_ORDERS_DRY_RUN=1
 .\.venv\Scripts\python.exe app\jobs\job_ozon_orders.py
 ```
 
-Для Ozon нужны секреты `OZON_CLIENT_ID` и `OZON_API_KEY`. В целевом режиме их
+Для Ozon нужны секреты `OZON_CLIENT_ID` и `OZON_API_KEY`. В production-режиме их
 лучше хранить через `APP_SECRET_BACKEND=keyring`, а не в `.env`.
 
 Ozon stocks:
@@ -478,7 +484,11 @@ Get-ScheduledTaskInfo -TaskPath "\DB_MP\" -TaskName "WB_Orders_Sync" |
 
 ---
 
-## Переменные окружения (.env)
+## Переменные окружения и секреты
+
+`.env` нужен для обычных настроек: режим, расписания, пути к логам, даты,
+лимиты. Реальные токены и пароли в production-режиме лучше хранить в Windows
+Credential Manager через `keyring`.
 
 | Переменная                     | Обязательна | По умолчанию | Описание                               |
 |--------------------------------|-------------|--------------|----------------------------------------|
@@ -487,18 +497,19 @@ Get-ScheduledTaskInfo -TaskPath "\DB_MP\" -TaskName "WB_Orders_Sync" |
 | `APP_SECRET_SERVICE_NAME`      | ❌           | `DataBase_MP`| Имя сервиса для Windows Credential Manager |
 | `GOOGLE_SHEETS_ANALYTICS_MP_SPREADSHEET_ID` | ❌ | ID таблицы `Аналитика МП` | Таблица-эталон для аудита |
 | `GOOGLE_APPLICATION_CREDENTIALS` | ❌         | `secrets/google-service-account.json` | Путь к service account JSON |
-| `WB_TOKEN`                     | ✅           | —            | Токен WB API (Статистика + Аналитика)  |
-| `PG_DSN`                       | ✅           | —            | DSN подключения к PostgreSQL           |
-| `POSTGRES_PASSWORD`            | ✅           | —            | Пароль для Docker-контейнера           |
-| `TG_BOT_TOKEN`                 | ❌           | —            | Токен Telegram-бота                    |
-| `TG_CHAT_ID`                   | ❌           | —            | ID чата для алертов                    |
+| `WB_TOKEN`                     | ✅           | —            | Секрет: токен WB API (Статистика + Аналитика) |
+| `WB_TOKEN_CONTENT`             | ✅ для рекламы | —          | Секрет: токен WB Advertising API       |
+| `PG_DSN`                       | ✅           | —            | Секрет: DSN подключения к PostgreSQL   |
+| `POSTGRES_PASSWORD`            | ✅           | —            | Секрет: пароль для Docker-контейнера   |
+| `TG_BOT_TOKEN`                 | ❌           | —            | Секрет: токен Telegram-бота            |
+| `TG_CHAT_ID`                   | ❌           | —            | Секрет: ID чата для алертов            |
 | `LOG_LEVEL`                    | ❌           | `INFO`       | Уровень логов (DEBUG/INFO/WARNING)     |
 | `WB_FIRST_RUN_DAYS_BACK`       | ❌           | `3`          | Глубина первого запуска заказов (дней) |
 | `WB_LOOKBACK_MINUTES`          | ❌           | `10`         | Откат курсора заказов (минут)          |
 | `WB_RAW_DEDUP_RETENTION_DAYS`  | ❌           | `14`         | Хранение сырых заказов (дней)          |
 | `WB_STOCKS_RAW_RETENTION_DAYS` | ❌           | `30`         | Хранение сырых остатков (дней)         |
-| `OZON_CLIENT_ID`               | ✅ для Ozon  | —            | Client-Id Ozon Seller API             |
-| `OZON_API_KEY`                 | ✅ для Ozon  | —            | Api-Key Ozon Seller API               |
+| `OZON_CLIENT_ID`               | ✅ для Ozon  | —            | Секрет: Client-Id Ozon Seller API     |
+| `OZON_API_KEY`                 | ✅ для Ozon  | —            | Секрет: Api-Key Ozon Seller API       |
 | `OZON_ORDERS_LOG_FILE`         | ❌           | —            | Файл лога Ozon orders job             |
 | `OZON_ORDERS_DRY_RUN`          | ❌           | `0`          | Проверить период без API/БД           |
 | `OZON_ORDERS_FIRST_RUN_DATE`   | ❌           | 1 января текущего года | Дата первого полного запуска |
@@ -520,25 +531,34 @@ Get-ScheduledTaskInfo -TaskPath "\DB_MP\" -TaskName "WB_Orders_Sync" |
 | `SOURCE_STATISTICS_ORDERS_LIST_PATH` | ❌     | `\\tsclient\P\Список заказов` | Папка/файл списка заказов на Windows-сервере |
 | `SOURCE_STATISTICS_1C_STOCKS_PATH` | ❌        | `\\tsclient\S\МП` | Папка/файл остатков 1С на Windows-сервере |
 
-### Секреты взрослее `.env`
+### Секреты через Windows Credential Manager
 
-Текущий рабочий режим пока поддерживает `.env`, чтобы не сломать действующие
-Windows jobs. Новый слой `app/secrets.py` уже умеет читать секреты через
+Текущий рабочий режим поддерживает fallback на `.env`, чтобы не сломать
+действующие Windows jobs. Production-режим должен хранить секреты через
 `keyring`, то есть через Windows Credential Manager.
 
-Для перехода:
+Безопасный переход:
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe -c "import keyring; keyring.set_password('DataBase_MP', 'WB_TOKEN', 'вставьте_токен')"
+.\.venv\Scripts\python.exe -m app.cli secrets migrate-from-env
+.\.venv\Scripts\python.exe -m app.cli secrets status --backend keyring
 ```
 
-В `.env` после этого можно поставить:
+После проверки в `.env` оставить только режим и несекретные настройки:
 
 ```env
 APP_SECRET_BACKEND=keyring
 APP_SECRET_SERVICE_NAME=DataBase_MP
 ```
+
+Ручная запись одного секрета:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli secrets set WB_TOKEN
+```
+
+Команда попросит вставить значение два раза и не покажет его на экране.
 
 Значения секретов в интерфейсах и проверках должны показываться только как
 `задан` / `не задан`.
@@ -551,4 +571,5 @@ APP_SECRET_SERVICE_NAME=DataBase_MP
 - **Port:** `5432`
 - **Database:** `marketplace`
 - **User:** `app`
-- **Password:** значение `POSTGRES_PASSWORD` из `.env`
+- **Password:** значение секрета `POSTGRES_PASSWORD` из Windows Credential Manager
+  или временно из `.env`, пока переход не завершён

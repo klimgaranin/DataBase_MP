@@ -12,8 +12,8 @@ app/utils.py
   - Telegram-алерт: tg_send()
 
 Все функции — без side-эффектов при импорте.
-TG_BOT_TOKEN и TG_CHAT_ID читаются из окружения один раз при вызове tg_send(),
-чтобы .env успел загрузиться в джобе до первого обращения.
+TG_BOT_TOKEN и TG_CHAT_ID читаются через app.secrets при вызове tg_send(),
+чтобы .env/keyring успели загрузиться до первого обращения.
 ──────────────────────────────────────────────────────────────────────────────
 """
 from __future__ import annotations
@@ -198,7 +198,7 @@ def tg_send(text: str, *, logger: Optional[logging.Logger] = None) -> None:
     """
     Отправляет сообщение в Telegram-бот. Никогда не бросает исключений.
 
-    Токен и chat_id берутся из переменных окружения:
+    Токен и chat_id берутся через app.secrets:
         TG_BOT_TOKEN — токен бота (от @BotFather)
         TG_CHAT_ID   — id чата или канала, куда слать сообщения
 
@@ -209,8 +209,10 @@ def tg_send(text: str, *, logger: Optional[logging.Logger] = None) -> None:
     logger — опционально: если передать логгер джоба, предупреждение
              об ошибке отправки попадёт в лог именно этого джоба.
     """
-    token = os.getenv("TG_BOT_TOKEN", "").strip()
-    chat_id = os.getenv("TG_CHAT_ID", "").strip()
+    from app.secrets import get_secret
+
+    token = (get_secret("TG_BOT_TOKEN") or "").strip()
+    chat_id = (get_secret("TG_CHAT_ID") or "").strip()
     if not token or not chat_id:
         return
     _log = logger or logging.getLogger(__name__)

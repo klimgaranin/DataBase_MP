@@ -130,7 +130,9 @@ def _print_logs(env: dict[str, str], *, log_lines: int) -> None:
 
 
 def check_db(env: dict[str, str], *, log_lines: int) -> None:
-    dsn = env.get("PG_DSN", "")
+    from app.secrets import get_secret
+
+    dsn = get_secret("PG_DSN") or ""
     print(f"PG_DSN: {safe_dsn_summary(dsn)}")
     if not dsn:
         print("DB: SKIP, PG_DSN не задан")
@@ -237,13 +239,17 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     env = load_health_env()
+    from app.secrets import SENSITIVE_SECRET_NAMES, secret_status
+
+    active_secret_status = secret_status(SENSITIVE_SECRET_NAMES)
 
     print("DataBase_MP health check")
     print(f"Root: {PROJECT_ROOT}")
 
     _print_section("Окружение")
     for key in CORE_ENV_KEYS:
-        print(f"{key}: {'задан' if env.get(key) else 'не задан'}")
+        is_set = active_secret_status.get(key, False) if key in SENSITIVE_SECRET_NAMES else bool(env.get(key))
+        print(f"{key}: {'задан' if is_set else 'не задан'}")
 
     _print_section("Зависимости")
     deps = dependency_status()
@@ -260,4 +266,3 @@ def main(argv: Sequence[str] | None = None) -> int:
     _print_section("База данных")
     check_db(env, log_lines=max(0, args.log_lines))
     return 0
-

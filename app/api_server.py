@@ -39,6 +39,7 @@ sys.path.insert(0, str(_HERE))
 sys.path.insert(0, str(_HERE.parent))
 
 from app.utils import load_env, setup_logging
+from app.secrets import get_secret
 load_env(__file__)
 
 # ── logger ────────────────────────────────────────────────────────────────────
@@ -59,9 +60,9 @@ app = FastAPI(
 _bearer_scheme = HTTPBearer()
 
 def _verify_token(creds: HTTPAuthorizationCredentials = Depends(_bearer_scheme)) -> str:
-    expected = os.getenv("API_SERVER_TOKEN", "").strip()
+    expected = (get_secret("API_SERVER_TOKEN") or "").strip()
     if not expected:
-        raise RuntimeError("API_SERVER_TOKEN не задан в .env")
+        raise RuntimeError("API_SERVER_TOKEN не задан")
     if creds.credentials != expected:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

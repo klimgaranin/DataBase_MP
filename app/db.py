@@ -5,7 +5,6 @@ db.py — все DB-функции проекта DataBase_MP.
 from __future__ import annotations
 
 import json
-import os
 import re
 import hashlib
 from contextlib import contextmanager
@@ -35,10 +34,12 @@ _ADVISORY_LOCK_CONNECTIONS: dict[int, psycopg2.extensions.connection] = {}
 
 
 def _get_connection_kwargs() -> dict[str, Any] | str:
-    dsn = os.getenv("PG_DSN", "")
+    from app.secrets import get_secret
+
+    dsn = get_secret("PG_DSN") or ""
     if not dsn:
-        raise RuntimeError("PG_DSN не задан в .env")
-    env_password = os.getenv("POSTGRES_PASSWORD", "")
+        raise RuntimeError("PG_DSN не задан")
+    env_password = get_secret("POSTGRES_PASSWORD") or ""
     parsed = urlparse(dsn)
     if parsed.scheme:
         kwargs: dict[str, Any] = {

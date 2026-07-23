@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from app.secrets import get_secret
+
 log = logging.getLogger(__name__)
 
 # WB Statistics API (Orders)
@@ -70,10 +72,9 @@ def _env_float(name: str, default: float, min_v: float, max_v: float) -> float:
 
 
 def load_config() -> WbOrdersClientConfig:
-    # Ожидаем, что токен лежит в WB_TOKEN
-    token = (os.getenv("WB_TOKEN") or "").strip()
+    token = (get_secret("WB_TOKEN") or "").strip()
     if not token:
-        raise RuntimeError("WB_TOKEN не задан. Добавь WB_TOKEN в .env (токен Statistics API).")
+        raise RuntimeError("WB_TOKEN не задан (токен Statistics API).")
 
     return WbOrdersClientConfig(
         token=token,

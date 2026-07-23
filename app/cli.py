@@ -19,6 +19,24 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_parser = subparsers.add_parser("jobs-status", help="показать последние запуски jobs")
     jobs_parser.add_argument("--limit", type=int, default=10, help="сколько последних запусков показать")
 
+    secrets_parser = subparsers.add_parser("secrets", help="управление секретами keyring")
+    secrets_subparsers = secrets_parser.add_subparsers(dest="secrets_command", required=True)
+
+    secrets_status = secrets_subparsers.add_parser("status", help="показать, какие секреты заданы")
+    secrets_status.add_argument("names", nargs="*")
+    secrets_status.add_argument("--backend", choices=("active", "keyring"), default="active")
+
+    secrets_set = secrets_subparsers.add_parser("set", help="сохранить секрет в keyring")
+    secrets_set.add_argument("name")
+    secrets_set.add_argument("--value")
+
+    secrets_delete = secrets_subparsers.add_parser("delete", help="удалить секрет из keyring")
+    secrets_delete.add_argument("name")
+
+    secrets_migrate = secrets_subparsers.add_parser("migrate-from-env", help="перенести секреты из env в keyring")
+    secrets_migrate.add_argument("names", nargs="*")
+    secrets_migrate.add_argument("--overwrite", action="store_true")
+
     return parser
 
 
@@ -43,9 +61,20 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         return print_jobs_status(limit=max(1, args.limit))
 
+    if args.command == "secrets":
+        from app.ops.secrets import delete_secret, migrate_from_env, print_secrets_status, set_secret
+
+        if args.secrets_command == "status":
+            return print_secrets_status(args.names, backend=args.backend)
+        if args.secrets_command == "set":
+            return set_secret(args.name, args.value)
+        if args.secrets_command == "delete":
+            return delete_secret(args.name)
+        if args.secrets_command == "migrate-from-env":
+            return migrate_from_env(args.names, overwrite=args.overwrite)
+
     return 2
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
