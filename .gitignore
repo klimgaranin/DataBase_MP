@@ -31,9 +31,9 @@ dist/
 pip-wheel-metadata/
 
 .idea/
+.codex/
+AGENTS.md
 .vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
 
 .DS_Store
 Thumbs.db

@@ -2,7 +2,8 @@
 Проверка проектных стандартов DataBase_MP.
 
 Инструмент не читает секреты и не ходит в сеть. Он проверяет, что документы
-стандартов на месте и что в корне нет очевидных случайных рабочих файлов.
+стандартов на месте в Developer_Knowledge и что в корне проекта нет очевидных
+случайных рабочих файлов.
 """
 from __future__ import annotations
 
@@ -10,15 +11,16 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
+KNOWLEDGE_ROOT = ROOT.parent / "Developer_Knowledge" / "projects" / ROOT.name
 
 REQUIRED_FILES = [
-    ".codex/PROJECT_STANDARDS.md",
-    ".codex/workflows/cleanup_check.md",
-    ".codex/roles/project_steward.md",
+    "PROJECT_STANDARDS.md",
+    "workflows/cleanup_check.md",
+    "roles/project_steward.md",
 ]
 
 REQUIRED_TEXT = {
-    ".codex/PROJECT_STANDARDS.md": [
+    "PROJECT_STANDARDS.md": [
         "raw",
         "staging",
         "analytics",
@@ -26,15 +28,16 @@ REQUIRED_TEXT = {
         "migrations/VNN__description.sql",
         "python tools/project_standards_check.py",
     ],
-    ".codex/AI_WORKFLOW.md": [
+    "AI_WORKFLOW.md": [
         "roles/project_steward.md",
         "workflows/cleanup_check.md",
     ],
-    "AGENTS.md": [
-        ".codex/PROJECT_STANDARDS.md",
-        "python tools/project_standards_check.py",
-    ],
 }
+
+LOCAL_AGENTS_REQUIRED_TEXT = [
+    "../Developer_Knowledge/projects/DataBase_MP/",
+    "PROJECT_STANDARDS.md",
+]
 
 ALLOWED_ROOT_SUFFIXES = {
     ".md",
@@ -66,6 +69,7 @@ ALLOWED_ROOT_DIRS = {
     "evidence",
     "infra",
     "local",
+    "logs",
     "migrations",
     "scripts",
     "tests",
@@ -74,24 +78,37 @@ ALLOWED_ROOT_DIRS = {
 
 
 def main() -> int:
+    if not KNOWLEDGE_ROOT.exists():
+        print("SKIP: Developer_Knowledge рядом не найден")
+        return 0
+
     errors: list[str] = []
 
     for rel_path in REQUIRED_FILES:
-        path = ROOT / rel_path
+        path = KNOWLEDGE_ROOT / rel_path
         if not path.exists():
-            errors.append(f"не найден файл стандарта: {rel_path}")
+            errors.append(f"не найден файл стандарта в Developer_Knowledge: {rel_path}")
         elif not path.read_text(encoding="utf-8").strip():
             errors.append(f"пустой файл стандарта: {rel_path}")
 
     for rel_path, required_parts in REQUIRED_TEXT.items():
-        path = ROOT / rel_path
+        path = KNOWLEDGE_ROOT / rel_path
         if not path.exists():
-            errors.append(f"не найден файл для проверки текста: {rel_path}")
+            errors.append(f"не найден файл для проверки текста в Developer_Knowledge: {rel_path}")
             continue
         text = path.read_text(encoding="utf-8")
         for part in required_parts:
             if part not in text:
                 errors.append(f"{rel_path}: нет обязательного упоминания {part}")
+
+    local_agents = ROOT / "AGENTS.md"
+    if not local_agents.exists():
+        errors.append("не найден локальный AGENTS.md-указатель")
+    else:
+        text = local_agents.read_text(encoding="utf-8")
+        for part in LOCAL_AGENTS_REQUIRED_TEXT:
+            if part not in text:
+                errors.append(f"AGENTS.md: нет обязательного упоминания {part}")
 
     for item in ROOT.iterdir():
         name = item.name

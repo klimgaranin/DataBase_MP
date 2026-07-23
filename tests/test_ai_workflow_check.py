@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import unittest
 
-from tools.ai_workflow_check import REQUIRED_FILES, ROOT, main
+from tools.ai_workflow_check import KNOWLEDGE_ROOT, REQUIRED_FILES, main
 
 
 class AiWorkflowCheckTests(unittest.TestCase):
     def test_required_files_exist(self) -> None:
-        missing = [rel_path for rel_path in REQUIRED_FILES if not (ROOT / rel_path).exists()]
+        if not KNOWLEDGE_ROOT.exists():
+            self.skipTest("Developer_Knowledge рядом не найден")
+        missing = [rel_path for rel_path in REQUIRED_FILES if not (KNOWLEDGE_ROOT / rel_path).exists()]
         self.assertEqual(missing, [])
 
     def test_main_passes(self) -> None:
@@ -16,4 +18,3 @@ class AiWorkflowCheckTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
