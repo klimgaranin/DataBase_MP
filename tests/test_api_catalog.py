@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from app.integrations.api_catalog import API_METHODS, methods_by_marketplace, missing_specs
+from app.integrations.api_catalog import API_METHODS, MP_GAS_SHARED, methods_by_marketplace, missing_specs
 
 
 class ApiCatalogTests(unittest.TestCase):
@@ -15,6 +15,8 @@ class ApiCatalogTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
 
     def test_referenced_local_specs_exist(self) -> None:
+        if not MP_GAS_SHARED.exists():
+            self.skipTest("mp-gas/shared рядом не найден")
         self.assertEqual(missing_specs(), [])
 
 
