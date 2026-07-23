@@ -9,12 +9,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_CORE_FILES = [
-    "AGENTS.md",
-    ".codex/PROJECT_CONTEXT.md",
-    ".codex/TASKS.md",
-    ".codex/DECISIONS.md",
-    ".codex/REFACTORING_PLAN.md",
-    ".codex/ANALYTICS_MP_LOGIC.md",
     "requirements.txt",
     "README.md",
     "infra/docker-compose.yml",
@@ -28,6 +22,7 @@ REQUIRED_CORE_FILES = [
     "app/clients/local_source_files.py",
     "app/clients/source_statistics_excel.py",
     "app/integrations/api_catalog.py",
+    "app/cli.py",
     "app/jobs/job_wb_orders.py",
     "app/jobs/job_wb_stocks.py",
     "app/jobs/job_ozon_orders.py",
@@ -41,6 +36,9 @@ REQUIRED_CORE_FILES = [
     "app/normalize/norm_source_statistics.py",
     "app/normalize/norm_wb_orders.py",
     "app/normalize/norm_wb_stocks.py",
+    "app/ops/health.py",
+    "app/ops/jobs_status.py",
+    "app/ops/migrations.py",
     "migrations/V11__source_statistics_ingestion.sql",
     "migrations/V12__ozon_api_orders.sql",
     "migrations/V13__ozon_stocks_and_placement.sql",

@@ -37,6 +37,8 @@ DataBase_MP/
 │   ├── normalize/
 │   │   ├── norm_wb_orders.py       # Нормализация заказов
 │   │   └── norm_wb_stocks.py       # Нормализация остатков
+│   ├── ops/                        # Штатные команды обслуживания проекта
+│   ├── cli.py                      # Единый CLI: health, migrate, jobs-status
 │   ├── db.py                       # Все функции работы с БД
 │   └── utils.py                    # Общие утилиты (логирование, TG, время)
 ├── infra/
@@ -222,11 +224,32 @@ Register-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Stocks_Sync" `
 .\.venv\Scripts\python.exe tools\health_check.py
 ```
 
+Новый единый способ вызвать ту же проверку:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli health
+```
+
 Применить SQL-миграции:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\apply_migrations.py --from-version 10 --to-version 14
 ```
+
+Новый единый способ:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli migrate --from-version 10 --to-version 14
+```
+
+Посмотреть последние запуски jobs:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli jobs-status --limit 10
+```
+
+Файлы `tools\health_check.py` и `tools\apply_migrations.py` оставлены как
+совместимые ярлыки для старых инструкций. Основная логика находится в `app\ops`.
 
 ### Аудит Google Таблицы `Аналитика МП`
 
@@ -252,7 +275,7 @@ Register-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Stocks_Sync" `
 ```
 
 Карта логики для переноса в PostgreSQL/Web ведётся в
-`.codex/ANALYTICS_MP_LOGIC.md`.
+`../Developer_Knowledge/projects/DataBase_MP/ANALYTICS_MP_LOGIC.md`.
 
 Новая миграция `migrations/V10__marketplace_analytics_foundation.sql` создаёт
 отдельные схемы `raw`, `staging`, `core`, `analytics` и первые таблицы для

@@ -33,7 +33,7 @@ pip-wheel-metadata/
 .idea/
 .codex/
 AGENTS.md
-.vscode/*
+.vscode/
 
 .DS_Store
 Thumbs.db
