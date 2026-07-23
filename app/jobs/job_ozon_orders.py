@@ -31,6 +31,15 @@ ALERT_NAME = "Ozon_Orders_Sync"
 LOCK_ID = 4_242_201
 
 
+def _resolve_log_file(value: str | None) -> str:
+    configured = (value or "").strip()
+    path = Path(configured) if configured else _THIS.parent.parent.parent / "logs" / "job_ozon_orders.log"
+    if not path.is_absolute():
+        path = _THIS.parent.parent.parent / path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return str(path)
+
+
 def _db_functions() -> dict[str, object]:
     from app.db import (
         advisory_unlock,
@@ -96,7 +105,7 @@ def _load_job_config() -> dict[str, object]:
     lookback_minutes = max(0, min(int(os.getenv("OZON_ORDERS_LOOKBACK_MINUTES", "180")), 24 * 60))
     debug_sleep = max(0, min(int(os.getenv("DEBUG_SLEEP_AFTER_LOCK_SECONDS", "0")), 3600))
     dry_run = os.getenv("OZON_ORDERS_DRY_RUN", "0").strip().lower() in {"1", "true", "yes"}
-    log_file = (os.getenv("OZON_ORDERS_LOG_FILE") or "").strip() or "logs/job_ozon_orders.log"
+    log_file = _resolve_log_file(os.getenv("OZON_ORDERS_LOG_FILE"))
     return {
         "first_run_start": first_run_start,
         "since_override": since_override,

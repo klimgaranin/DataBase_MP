@@ -11,7 +11,13 @@ import psycopg2
 
 import app.db as db
 from app.clients.http_ozon_seller import OzonSellerClient, iter_fbo_postings
-from app.jobs.job_ozon_orders import _apply_lookback, _first_run_start, _load_job_config, _max_cursor_from_postings
+from app.jobs.job_ozon_orders import (
+    _apply_lookback,
+    _first_run_start,
+    _load_job_config,
+    _max_cursor_from_postings,
+    _resolve_log_file,
+)
 from app.normalize.norm_ozon_orders import (
     normalize_ozon_fbo_order_items_full,
     normalize_ozon_fbo_posting,
@@ -52,6 +58,9 @@ class OzonOrdersPeriodTests(unittest.TestCase):
                 os.environ.pop("DEBUG_SLEEP_AFTER_LOCK_SECONDS", None)
             else:
                 os.environ["DEBUG_SLEEP_AFTER_LOCK_SECONDS"] = old
+
+    def test_default_log_file_is_absolute_for_task_scheduler(self) -> None:
+        self.assertTrue(os.path.isabs(_resolve_log_file("")))
 
 
 class OzonOrdersNormalizationTests(unittest.TestCase):
