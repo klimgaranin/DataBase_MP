@@ -57,12 +57,18 @@ class SecretBackendTests(unittest.TestCase):
 
     def test_wb_token_aliases_fall_back_to_common_token(self) -> None:
         os.environ["WB_TOKEN"] = "common-wb-token"
+        old_backend = os.environ.get("APP_SECRET_BACKEND")
+        os.environ["APP_SECRET_BACKEND"] = "env"
         os.environ.pop("WB_TOKEN_CONTENT", None)
         try:
             self.assertEqual(get_secret("WB_TOKEN_CONTENT"), "common-wb-token")
             self.assertEqual(secret_status(["WB_TOKEN_CONTENT"]), {"WB_TOKEN_CONTENT": True})
         finally:
             os.environ.pop("WB_TOKEN", None)
+            if old_backend is None:
+                os.environ.pop("APP_SECRET_BACKEND", None)
+            else:
+                os.environ["APP_SECRET_BACKEND"] = old_backend
 
     def test_split_pg_dsn_password_for_url_dsn(self) -> None:
         sanitized, password = split_pg_dsn_password("postgresql://app:secret@localhost:5432/marketplace")
