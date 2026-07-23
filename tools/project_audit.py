@@ -47,6 +47,7 @@ REQUIRED_CORE_FILES = [
     "scripts/run_ozon_orders.cmd",
     "scripts/run_ozon_placement.cmd",
     "scripts/run_ozon_stocks.cmd",
+    "scripts/run_hidden.vbs",
     "scripts/run_source_statistics.cmd",
     "scripts/run_wb_orders.cmd",
     "scripts/run_wb_stocks.cmd",

@@ -36,12 +36,16 @@ if (-not $root) {
 }
 
 $jobScript = Join-Path $root "scripts\run_ozon_orders.cmd"
+$hiddenRunner = Join-Path $root "scripts\run_hidden.vbs"
 $venvPython = Join-Path $root ".venv\Scripts\python.exe"
 $jobFile = Join-Path $root "app\jobs\job_ozon_orders.py"
 
 if (-not $SkipFileChecks) {
     if (-not (Test-Path $jobScript)) {
         throw "Missing run script: $jobScript"
+    }
+    if (-not (Test-Path $hiddenRunner)) {
+        throw "Missing hidden runner: $hiddenRunner"
     }
     if (-not (Test-Path $venvPython)) {
         throw "Missing venv python: $venvPython"
@@ -51,11 +55,11 @@ if (-not $SkipFileChecks) {
     }
 }
 
-$argument = "/c `"$jobScript`""
+$argument = "`"$hiddenRunner`" `"$jobScript`""
 $startAt = (Get-Date -Hour 0 -Minute 10 -Second 0)
 
 $action = New-ScheduledTaskAction `
-    -Execute "cmd.exe" `
+    -Execute "wscript.exe" `
     -Argument $argument
 
 $trigger = New-ScheduledTaskTrigger `
@@ -83,7 +87,7 @@ if ($PSCmdlet.ShouldProcess("$TaskPath$TaskName", "Register scheduled task")) {
         -Force | Out-Null
 
     Write-Host "OK: task $TaskPath$TaskName created or updated"
-    Write-Host "Command: cmd.exe $argument"
+    Write-Host "Command: wscript.exe $argument"
     Write-Host "Interval: every $IntervalMinutes minutes"
 
     if ($RunNow) {

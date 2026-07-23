@@ -47,11 +47,14 @@ WB-токен сейчас общий. Если отдельные `WB_TOKEN_CON
 ## Как подтянуть секреты из Bitwarden в рабочий запуск
 
 Когда секрет создан или изменён в Bitwarden, его нужно подтянуть в Windows
-Credential Manager одной командой:
+Credential Manager. Команды вводит менеджер в Windows PowerShell, потому что
+Bitwarden попросит мастер-пароль:
 
 ```powershell
 cd C:\Програмирование\Проекты\DataBase_MP
+$env:BW_SESSION = $(bw unlock --raw)
 .\.venv\Scripts\python.exe -m app.cli secrets pull-from-bitwarden
+bw lock
 ```
 
 Команда берёт записи из папки `DataBase_MP` с именами вида
@@ -100,19 +103,17 @@ cd C:\Програмирование\Проекты\DataBase_MP
 
 ## Как перенести текущие рабочие секреты в Bitwarden
 
-На Windows установлен Bitwarden CLI `bw`. Desktop-вход и CLI-вход разные, поэтому
-перед автоматическим переносом нужно один раз войти в CLI:
+На Windows установлен Bitwarden CLI `bw`. Desktop-вход и CLI-вход разные. Если
+CLI ещё не залогинен, сначала выполнить:
 
 ```powershell
 bw login
-bw unlock --raw
 ```
 
-`bw unlock --raw` напечатает длинную строку сессии. Её нужно записать в
-переменную текущего окна PowerShell:
+Перед переносом разблокировать CLI в текущем окне PowerShell:
 
 ```powershell
-$env:BW_SESSION="строка_из_bw_unlock_raw"
+$env:BW_SESSION = $(bw unlock --raw)
 ```
 
 После этого проектный скрипт создаст папку `DataBase_MP` и записи по секретам из
@@ -122,6 +123,7 @@ Windows Credential Manager:
 cd C:\Програмирование\Проекты\DataBase_MP
 .\.venv\Scripts\python.exe tools\sync_bitwarden_from_keyring.py --dry-run
 .\.venv\Scripts\python.exe tools\sync_bitwarden_from_keyring.py
+bw lock
 ```
 
 Скрипт не печатает значения секретов. Он создаёт/обновляет записи вида:

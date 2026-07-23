@@ -135,8 +135,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register_ozon_orders_task.ps1
 
 Задача в Планировщике будет называться
 `\DB_MP\Ozon_Orders_Sync`. Она запускает
-`scripts\run_ozon_orders.cmd`, который пишет текущие строки заказов Ozon,
-raw-ответы API и историю изменений отправлений.
+`scripts\run_ozon_orders.cmd` через скрытый wrapper `scripts\run_hidden.vbs`,
+чтобы при плановом запуске не открывалось окно терминала. Job пишет текущие
+строки заказов Ozon, raw-ответы API и историю изменений отправлений.
 
 #### Остатки — каждые 30 минут
 
