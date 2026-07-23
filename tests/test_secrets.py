@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
+from contextlib import redirect_stdout
+from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from app.secrets import EnvSecretBackend, KeyringSecretBackend, secret_status
+from app.ops.secrets import clean_env_file
+from app.secrets import EnvSecretBackend, KeyringSecretBackend, get_secret, secret_status, split_pg_dsn_password
 
 
 class SecretBackendTests(unittest.TestCase):
@@ -49,6 +54,49 @@ class SecretBackendTests(unittest.TestCase):
                 self.assertEqual(backend.get("TEST_SECRET_FALLBACK"), "from-env")
         finally:
             os.environ.pop("TEST_SECRET_FALLBACK", None)
+
+    def test_wb_token_aliases_fall_back_to_common_token(self) -> None:
+        os.environ["WB_TOKEN"] = "common-wb-token"
+        os.environ.pop("WB_TOKEN_CONTENT", None)
+        try:
+            self.assertEqual(get_secret("WB_TOKEN_CONTENT"), "common-wb-token")
+            self.assertEqual(secret_status(["WB_TOKEN_CONTENT"]), {"WB_TOKEN_CONTENT": True})
+        finally:
+            os.environ.pop("WB_TOKEN", None)
+
+    def test_split_pg_dsn_password_for_url_dsn(self) -> None:
+        sanitized, password = split_pg_dsn_password("postgresql://app:secret@localhost:5432/marketplace")
+        self.assertEqual(sanitized, "postgresql://app@localhost:5432/marketplace")
+        self.assertEqual(password, "secret")
+
+    def test_split_pg_dsn_password_for_libpq_dsn(self) -> None:
+        sanitized, password = split_pg_dsn_password("hostaddr=127.0.0.1 port=5432 dbname=marketplace user=app password='secret'")
+        self.assertEqual(sanitized, "hostaddr=127.0.0.1 port=5432 dbname=marketplace user=app")
+        self.assertEqual(password, "secret")
+
+    def test_clean_env_file_removes_secret_values_and_keeps_sanitized_pg_dsn(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / ".env"
+            path.write_text(
+                "\n".join(
+                    [
+                        "APP_SECRET_BACKEND=env",
+                        "PG_DSN=postgresql://app:secret@localhost:5432/marketplace",
+                        "POSTGRES_PASSWORD=secret",
+                        "WB_TOKEN=secret",
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            with redirect_stdout(StringIO()):
+                self.assertEqual(clean_env_file(path=str(path), backend="env"), 0)
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("APP_SECRET_BACKEND=env", text)
+            self.assertIn("PG_DSN=postgresql://app@localhost:5432/marketplace", text)
+            self.assertIn("# POSTGRES_PASSWORD хранится в secret backend", text)
+            self.assertIn("# WB_TOKEN хранится в secret backend", text)
+            self.assertNotIn("=secret", text)
 
 
 if __name__ == "__main__":

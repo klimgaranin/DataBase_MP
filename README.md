@@ -66,7 +66,7 @@ copy DataBase_MP\.env.example DataBase_MP\.env
 
 ```env
 WB_TOKEN=ваш_токен_wb_api
-PG_DSN=postgresql://app:ваш_пароль@localhost:5432/marketplace
+PG_DSN=postgresql://app@localhost:5432/marketplace
 POSTGRES_PASSWORD=ваш_пароль
 TG_BOT_TOKEN=токен_бота         # опционально — алерты в Telegram
 TG_CHAT_ID=id_чата              # опционально
@@ -497,9 +497,9 @@ Credential Manager через `keyring`.
 | `APP_SECRET_SERVICE_NAME`      | ❌           | `DataBase_MP`| Имя сервиса для Windows Credential Manager |
 | `GOOGLE_SHEETS_ANALYTICS_MP_SPREADSHEET_ID` | ❌ | ID таблицы `Аналитика МП` | Таблица-эталон для аудита |
 | `GOOGLE_APPLICATION_CREDENTIALS` | ❌         | `secrets/google-service-account.json` | Путь к service account JSON |
-| `WB_TOKEN`                     | ✅           | —            | Секрет: токен WB API (Статистика + Аналитика) |
-| `WB_TOKEN_CONTENT`             | ✅ для рекламы | —          | Секрет: токен WB Advertising API       |
-| `PG_DSN`                       | ✅           | —            | Секрет: DSN подключения к PostgreSQL   |
+| `WB_TOKEN`                     | ✅           | —            | Секрет: общий токен WB API             |
+| `WB_TOKEN_CONTENT`             | ❌           | `WB_TOKEN`   | Опциональный отдельный токен WB Advertising API |
+| `PG_DSN`                       | ✅           | —            | Настройка подключения к PostgreSQL без пароля |
 | `POSTGRES_PASSWORD`            | ✅           | —            | Секрет: пароль для Docker-контейнера   |
 | `TG_BOT_TOKEN`                 | ❌           | —            | Секрет: токен Telegram-бота            |
 | `TG_CHAT_ID`                   | ❌           | —            | Секрет: ID чата для алертов            |
@@ -550,6 +550,21 @@ Credential Manager через `keyring`.
 ```env
 APP_SECRET_BACKEND=keyring
 APP_SECRET_SERVICE_NAME=DataBase_MP
+PG_DSN=postgresql://app@localhost:5432/marketplace
+```
+
+`PG_DSN` должен быть без пароля. Пароль БД хранится отдельным секретом
+`POSTGRES_PASSWORD`. Если старый `PG_DSN` уже содержит пароль, разделить его
+можно командой:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli secrets normalize-postgres --overwrite-password
+```
+
+Очистить `.env` после переноса секретов:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli secrets clean-env --backend keyring
 ```
 
 Ручная запись одного секрета:

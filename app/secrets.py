@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from typing import Protocol
+from urllib.parse import quote, unquote, urlparse, urlunparse
 
 from app.config import DEFAULT_SECRET_SERVICE, get_config, load_project_env
 
@@ -20,6 +22,12 @@ SENSITIVE_SECRET_NAMES = [
     "TG_CHAT_ID",
     "API_SERVER_TOKEN",
 ]
+
+SECRET_ALIASES = {
+    "WB_TOKEN_CONTENT": ("WB_TOKEN",),
+    "WB_ANALYTICS_TOKEN": ("WB_TOKEN",),
+    "WB_SUPPLIES_TOKEN": ("WB_TOKEN",),
+}
 
 
 class SecretBackend(Protocol):
@@ -104,14 +112,18 @@ def get_secret_backend() -> SecretBackend:
 
 def get_secret(name: str, *, required: bool = False) -> str | None:
     value = get_secret_backend().get(name)
+    if not value:
+        for alias in SECRET_ALIASES.get(name, ()):
+            value = get_secret_backend().get(alias)
+            if value:
+                break
     if required and not value:
         raise RuntimeError(f"Секрет {name} не задан")
     return value
 
 
 def secret_status(names: list[str]) -> dict[str, bool]:
-    backend = get_secret_backend()
-    return {name: backend.exists(name) for name in names}
+    return {name: get_secret(name) is not None for name in names}
 
 
 def get_keyring_backend() -> KeyringSecretBackend:
@@ -122,3 +134,56 @@ def get_keyring_backend() -> KeyringSecretBackend:
 def keyring_secret_status(names: list[str]) -> dict[str, bool]:
     backend = get_keyring_backend()
     return {name: backend.exists(name) for name in names}
+
+
+def split_pg_dsn_password(dsn: str) -> tuple[str, str | None]:
+    dsn = (dsn or "").strip()
+    if not dsn:
+        return "", None
+
+    parsed = urlparse(dsn)
+    if parsed.scheme:
+        password = unquote(parsed.password or "") or None
+        host = parsed.hostname or ""
+        netloc = host
+        if parsed.username:
+            netloc = quote(unquote(parsed.username), safe="") + ("@" + host if host else "@")
+        if parsed.port:
+            netloc += f":{parsed.port}"
+        sanitized = urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+        return sanitized, password
+
+    values = _parse_libpq_dsn(dsn)
+    password = values.pop("password", "") or None
+    if not values:
+        return dsn, password
+    ordered_keys = ["host", "hostaddr", "port", "dbname", "user", "sslmode"]
+    rendered: list[str] = []
+    for key in ordered_keys:
+        if key in values:
+            rendered.append(f"{key}={_quote_libpq_value(values.pop(key))}")
+    for key in sorted(values):
+        rendered.append(f"{key}={_quote_libpq_value(values[key])}")
+    return " ".join(rendered), password
+
+
+def _parse_libpq_dsn(dsn: str) -> dict[str, str]:
+    matches = list(re.finditer(r"(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=", dsn))
+    result: dict[str, str] = {}
+    for idx, match in enumerate(matches):
+        key = match.group(1)
+        start = match.end()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(dsn)
+        value = dsn[start:end].strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        result[key] = value
+    return result
+
+
+def _quote_libpq_value(value: str) -> str:
+    if not value:
+        return "''"
+    if re.search(r"\s|'|\\\\", value):
+        return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+    return value
