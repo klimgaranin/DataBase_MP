@@ -65,6 +65,41 @@ cd C:\Програмирование\Проекты\DataBase_MP
 
 Статус должен показывать только `задан` или `не задан`.
 
+## Как перенести текущие рабочие секреты в Bitwarden
+
+На Windows установлен Bitwarden CLI `bw`. Desktop-вход и CLI-вход разные, поэтому
+перед автоматическим переносом нужно один раз войти в CLI:
+
+```powershell
+bw login
+bw unlock --raw
+```
+
+`bw unlock --raw` напечатает длинную строку сессии. Её нужно записать в
+переменную текущего окна PowerShell:
+
+```powershell
+$env:BW_SESSION="строка_из_bw_unlock_raw"
+```
+
+После этого проектный скрипт создаст папку `DataBase_MP` и записи по секретам из
+Windows Credential Manager:
+
+```powershell
+cd C:\Програмирование\Проекты\DataBase_MP
+.\.venv\Scripts\python.exe tools\sync_bitwarden_from_keyring.py --dry-run
+.\.venv\Scripts\python.exe tools\sync_bitwarden_from_keyring.py
+```
+
+Скрипт не печатает значения секретов. Он создаёт/обновляет записи вида:
+
+```text
+DataBase_MP / WB_TOKEN
+DataBase_MP / OZON_CLIENT_ID
+DataBase_MP / OZON_API_KEY
+DataBase_MP / POSTGRES_PASSWORD
+```
+
 ## PostgreSQL
 
 `PG_DSN` хранится без пароля:

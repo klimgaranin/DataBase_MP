@@ -542,6 +542,14 @@ Credential Manager через `keyring`.
 переносятся из Bitwarden в Windows Credential Manager через команды ниже.
 Подробная инструкция: `docs/secret-management.md`.
 
+Если нужно перенести уже настроенные runtime-секреты из Windows Credential
+Manager в Bitwarden, используется:
+
+```powershell
+.\.venv\Scripts\python.exe tools\sync_bitwarden_from_keyring.py --dry-run
+.\.venv\Scripts\python.exe tools\sync_bitwarden_from_keyring.py
+```
+
 Безопасный переход:
 
 ```powershell
