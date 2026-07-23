@@ -30,7 +30,9 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 # ── bootstrap .env ────────────────────────────────────────────────────────────
@@ -55,6 +57,10 @@ app = FastAPI(
     docs_url=None,   # отключаем Swagger в продакшне
     redoc_url=None,
 )
+
+_ADMIN_STATIC = Path(__file__).parent / "admin" / "static"
+if _ADMIN_STATIC.exists():
+    app.mount("/admin/static", StaticFiles(directory=str(_ADMIN_STATIC)), name="admin-static")
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 _bearer_scheme = HTTPBearer()
@@ -124,6 +130,46 @@ def health():
         running = bool(_active_job)
         job_id  = _active_job.get("job_id")
     return {"status": "ok", "job_running": running, "job_id": job_id}
+
+
+@app.get("/admin")
+def admin_page():
+    index_path = _ADMIN_STATIC / "index.html"
+    if not index_path.exists():
+        raise HTTPException(status_code=404, detail="Admin UI is not installed")
+    return FileResponse(index_path)
+
+
+@app.get("/api/v1/admin/overview")
+def admin_overview(_auth: str = Depends(_verify_token)):
+    from app.admin.service import get_overview
+
+    return get_overview()
+
+
+@app.get("/api/v1/admin/jobs")
+def admin_jobs(limit: int = 20, _auth: str = Depends(_verify_token)):
+    from app.admin.service import get_jobs
+
+    return {"items": get_jobs(limit=limit)}
+
+
+@app.get("/api/v1/admin/secrets")
+def admin_secrets(_auth: str = Depends(_verify_token)):
+    from app.admin.service import get_secrets_status
+
+    return {"items": get_secrets_status()}
+
+
+@app.get("/api/v1/admin/orders")
+def admin_orders(marketplace: str = "wb", limit: int = 100, _auth: str = Depends(_verify_token)):
+    from app.admin.service import get_orders_feed
+
+    try:
+        items = get_orders_feed(marketplace=marketplace.lower(), limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"items": items}
 
 
 @app.post("/api/v1/drr/start", status_code=202)

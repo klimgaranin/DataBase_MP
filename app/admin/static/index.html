@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DataBase_MP Admin</title>
+    <link rel="stylesheet" href="/admin/static/styles.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">DB</div>
+        <div>
+          <div class="brand-title">DataBase_MP</div>
+          <div class="brand-subtitle">Панель управления</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <button class="nav-button active" data-tab="admin">Админка</button>
+        <button class="nav-button" data-tab="orders">Лента заказов</button>
+      </nav>
+      <div class="token-box">
+        <label for="apiToken">API token</label>
+        <input id="apiToken" type="password" autocomplete="off" placeholder="Вставить токен" />
+        <button id="saveToken" class="primary">Сохранить</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="pageTitle">Админка</h1>
+          <p id="pageSubtitle">Состояние системы, секретов и последних jobs</p>
+        </div>
+        <button id="refresh" class="ghost">Обновить</button>
+      </header>
+
+      <section id="authNotice" class="notice">
+        Вставьте API token. Данные не загрузятся без авторизации.
+      </section>
+
+      <section id="adminTab" class="tab active">
+        <div class="kpi-grid">
+          <article class="kpi">
+            <span>База данных</span>
+            <strong id="dbStatus">-</strong>
+            <small id="dbDetail">-</small>
+          </article>
+          <article class="kpi">
+            <span>Секреты</span>
+            <strong id="secretsStatus">-</strong>
+            <small id="secretsDetail">-</small>
+          </article>
+          <article class="kpi">
+            <span>Последние jobs</span>
+            <strong id="jobsStatus">-</strong>
+            <small id="jobsDetail">-</small>
+          </article>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Последние запуски</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Статус</th>
+                  <th>Старт</th>
+                  <th>API</th>
+                  <th>Норм.</th>
+                  <th>Дубли</th>
+                </tr>
+              </thead>
+              <tbody id="jobsBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Секреты</h2>
+          </div>
+          <div id="secretsList" class="secret-grid"></div>
+        </section>
+      </section>
+
+      <section id="ordersTab" class="tab">
+        <div class="toolbar">
+          <div class="segmented">
+            <button class="segment active" data-marketplace="wb">WB</button>
+            <button class="segment" data-marketplace="ozon">Ozon</button>
+          </div>
+        </div>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Лента заказов</h2>
+            <span id="ordersHint">Последние строки WB</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Маркетплейс</th>
+                  <th>Заказ</th>
+                  <th>Статус</th>
+                  <th>Дата</th>
+                  <th>Склад</th>
+                  <th>Артикул</th>
+                  <th>Товар</th>
+                  <th>Кол-во</th>
+                  <th>Цена</th>
+                </tr>
+              </thead>
+              <tbody id="ordersBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/admin/static/admin.js"></script>
+  </body>
+</html>

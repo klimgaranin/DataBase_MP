@@ -27,25 +27,33 @@
 ```
 DataBase_MP/
 ├── app/
+│   ├── admin/                      # Web-админка и backend-данные для UI
 │   ├── clients/
-│   │   ├── http_wb_statistics.py   # HTTP-клиент WB Statistics API (заказы)
-│   │   └── http_wb_stocks.py       # HTTP-клиент WB Analytics API (остатки)
+│   │   ├── http_wb_statistics.py   # HTTP-клиент WB Statistics API
+│   │   ├── http_wb_stocks.py       # HTTP-клиент WB Analytics API
+│   │   └── http_ozon_seller.py     # HTTP-клиент Ozon Seller API
 │   ├── jobs/
-│   │   ├── job_wb_orders.py        # Инкрементальный джоб заказов
-│   │   ├── job_wb_orders_backfill.py # Разовый бэкфилл исторических заказов
-│   │   └── job_wb_stocks.py        # Джоб остатков (каждые 30 мин)
+│   │   ├── job_wb_orders.py        # WB заказы
+│   │   ├── job_wb_stocks.py        # WB остатки
+│   │   ├── job_ozon_orders.py      # Ozon FBO заказы
+│   │   ├── job_ozon_stocks.py      # Ozon остатки
+│   │   └── job_ozon_placement.py   # Ozon стоимость размещения
 │   ├── normalize/
-│   │   ├── norm_wb_orders.py       # Нормализация заказов
-│   │   └── norm_wb_stocks.py       # Нормализация остатков
+│   │   ├── norm_wb_orders.py       # Нормализация WB
+│   │   └── norm_ozon_orders.py     # Нормализация Ozon
 │   ├── ops/                        # Штатные команды обслуживания проекта
-│   ├── cli.py                      # Единый CLI: health, migrate, jobs-status
+│   ├── cli.py                      # Единый CLI управления
+│   ├── api_server.py               # FastAPI server: триггер fullstats и админка
 │   ├── db.py                       # Все функции работы с БД
 │   └── utils.py                    # Общие утилиты (логирование, TG, время)
 ├── infra/
 │   └── docker-compose.yml          # PostgreSQL 16 контейнер
 ├── scripts/
-│   ├── run_wb_orders.cmd           # Точка входа для планировщика (заказы)
-│   └── run_wb_stocks.cmd           # Точка входа для планировщика (остатки)
+│   ├── run_wb_orders.cmd
+│   ├── run_wb_stocks.cmd
+│   ├── run_ozon_orders.cmd
+│   ├── run_api_server.cmd
+│   └── run_hidden.vbs              # Скрытый запуск scheduled jobs
 ├── .env                            # Секреты (не в git!)
 ├── .env.example                    # Шаблон переменных окружения
 ├── requirements.txt
@@ -209,54 +217,53 @@ Register-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Stocks_Sync" `
 
 ### Проверка проекта после изменений
 
-```powershell
-.\.venv\Scripts\python.exe -m unittest discover -s tests
-.\.venv\Scripts\python.exe -m compileall app tools tests
-.\.venv\Scripts\python.exe tools\project_audit.py
-```
-
-`tools\project_audit.py` не запускает выгрузки WB и не меняет БД. Он проверяет,
-что репозиторий собран аккуратно: ключевые файлы на месте, зависимости читаются,
-скрипты запуска выглядят ожидаемо, код компилируется, тесты проходят.
-
-Для диагностического просмотра окружения и БД без запуска WB API:
-
-```powershell
-.\.venv\Scripts\python.exe tools\health_check.py
-```
-
-Новый единый способ вызвать ту же проверку:
+Единый способ управлять проектом:
 
 ```powershell
 .\.venv\Scripts\python.exe -m app.cli health
-```
-
-Применить SQL-миграции:
-
-```powershell
-.\.venv\Scripts\python.exe tools\apply_migrations.py --from-version 10 --to-version 14
-```
-
-Новый единый способ:
-
-```powershell
 .\.venv\Scripts\python.exe -m app.cli migrate --from-version 10 --to-version 14
-```
-
-Посмотреть последние запуски jobs:
-
-```powershell
 .\.venv\Scripts\python.exe -m app.cli jobs-status --limit 10
-```
-
-Проверить, какие секреты видит проект:
-
-```powershell
+.\.venv\Scripts\python.exe -m app.cli audit
+.\.venv\Scripts\python.exe -m app.cli checks
 .\.venv\Scripts\python.exe -m app.cli secrets status
 ```
 
-Файлы `tools\health_check.py` и `tools\apply_migrations.py` оставлены как
-совместимые ярлыки для старых инструкций. Основная логика находится в `app\ops`.
+Старые `tools\*.py` оставлены только как совместимые ярлыки или редкие
+аудиторы. Постоянные операции запускаются через `python -m app.cli`.
+
+Минимальная проверка после изменений:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests
+.\.venv\Scripts\python.exe -m compileall app tools tests
+.\.venv\Scripts\python.exe -m app.cli audit
+```
+
+`audit` не запускает выгрузки WB/Ozon и не меняет БД. Он проверяет, что
+репозиторий собран аккуратно: ключевые файлы на месте, зависимости читаются,
+скрипты запуска выглядят ожидаемо, код компилируется, тесты проходят.
+
+### Web-админка
+
+Админка встроена в существующий FastAPI server.
+
+```powershell
+scripts\run_api_server.cmd
+```
+
+Открыть:
+
+```text
+http://localhost:8080/admin
+```
+
+В интерфейсе есть вкладки:
+
+- **Админка** — база, секреты, последние jobs.
+- **Лента заказов** — отдельно WB и Ozon.
+
+Данные админки защищены `API_SERVER_TOKEN`. Вставьте токен в поле `API token`.
+Значения секретов в интерфейсе не показываются, только статус.
 
 ### Аудит Google Таблицы `Аналитика МП`
 
@@ -541,23 +548,44 @@ Credential Manager через `keyring`.
 Для человека главный сейф — Bitwarden Desktop. В нём удобно хранить реальные
 токены и пароли с понятными названиями. В рабочий запуск проекта секреты
 переносятся из Bitwarden в Windows Credential Manager через команды ниже.
-Подробная инструкция: `docs/secret-management.md`.
+
+### Bitwarden -> Windows Credential Manager
+
+Когда секрет создан или изменён в Bitwarden, его нужно подтянуть в рабочий
+keyring. Команды вводит менеджер в Windows PowerShell, потому что Bitwarden
+попросит мастер-пароль:
+
+```powershell
+cd C:\Програмирование\Проекты\DataBase_MP
+$env:BW_SESSION = $(bw unlock --raw)
+.\.venv\Scripts\python.exe -m app.cli secrets pull-from-bitwarden
+bw lock
+```
+
+Подтянуть один секрет:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli secrets pull-from-bitwarden OZON_API_KEY
+```
+
+Команда берёт записи из папки Bitwarden `DataBase_MP` с именами вида
+`DataBase_MP / SECRET_NAME`, обновляет одноимённые секреты в keyring и не
+печатает значения.
+
+### Windows Credential Manager -> Bitwarden
 
 Если нужно перенести уже настроенные runtime-секреты из Windows Credential
 Manager в Bitwarden, используется:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\sync_bitwarden_from_keyring.py --dry-run
-.\.venv\Scripts\python.exe tools\sync_bitwarden_from_keyring.py
-```
-
-Если токен изменён в Bitwarden и его нужно подтянуть обратно в рабочее
-хранилище jobs:
-
-```powershell
+cd C:\Програмирование\Проекты\DataBase_MP
 $env:BW_SESSION = $(bw unlock --raw)
-.\.venv\Scripts\python.exe -m app.cli secrets pull-from-bitwarden
+.\.venv\Scripts\python.exe -m app.cli bitwarden push-from-keyring --dry-run
+.\.venv\Scripts\python.exe -m app.cli bitwarden push-from-keyring
+bw lock
 ```
+
+### Первичный переход с `.env`
 
 Безопасный переход:
 

@@ -26,7 +26,7 @@ REQUIRED_TEXT = {
         "analytics",
         "TypedDict",
         "migrations/VNN__description.sql",
-        "python tools/project_standards_check.py",
+        "python -m app.cli checks",
     ],
     "AI_WORKFLOW.md": [
         "roles/project_steward.md",
@@ -66,7 +66,6 @@ ALLOWED_ROOT_DIRS = {
     ".vscode",
     "app",
     "archive",
-    "docs",
     "evidence",
     "infra",
     "local",

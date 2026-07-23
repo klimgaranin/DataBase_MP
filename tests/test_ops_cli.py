@@ -16,6 +16,22 @@ class OpsCliTests(unittest.TestCase):
         self.assertTrue(args.skip_db)
         self.assertEqual(args.log_lines, 0)
 
+    def test_cli_parser_accepts_audit_command(self) -> None:
+        args = build_parser().parse_args(["audit"])
+        self.assertEqual(args.command, "audit")
+
+    def test_cli_parser_accepts_checks_command(self) -> None:
+        args = build_parser().parse_args(["checks", "audit"])
+        self.assertEqual(args.command, "checks")
+        self.assertEqual(args.names, ["audit"])
+
+    def test_cli_parser_accepts_bitwarden_push_command(self) -> None:
+        args = build_parser().parse_args(["bitwarden", "push-from-keyring", "--dry-run", "WB_TOKEN"])
+        self.assertEqual(args.command, "bitwarden")
+        self.assertEqual(args.bitwarden_command, "push-from-keyring")
+        self.assertTrue(args.dry_run)
+        self.assertEqual(args.names, ["WB_TOKEN"])
+
     def test_health_command_can_skip_db(self) -> None:
         self.assertEqual(main(["health", "--skip-db", "--log-lines", "0"]), 0)
 

@@ -19,6 +19,16 @@ def build_parser() -> argparse.ArgumentParser:
     jobs_parser = subparsers.add_parser("jobs-status", help="показать последние запуски jobs")
     jobs_parser.add_argument("--limit", type=int, default=10, help="сколько последних запусков показать")
 
+    subparsers.add_parser("audit", help="проверить целостность проекта")
+
+    checks_parser = subparsers.add_parser("checks", help="запустить проектные проверки")
+    checks_parser.add_argument(
+        "names",
+        nargs="*",
+        choices=("ai-workflow", "project-standards", "audit"),
+        help="какие проверки запустить; по умолчанию все",
+    )
+
     secrets_parser = subparsers.add_parser("secrets", help="управление секретами keyring")
     secrets_subparsers = secrets_parser.add_subparsers(dest="secrets_command", required=True)
 
@@ -49,6 +59,13 @@ def build_parser() -> argparse.ArgumentParser:
     secrets_clean_env.add_argument("--path", default=".env")
     secrets_clean_env.add_argument("--backend", choices=("env", "keyring"), default="keyring")
 
+    bitwarden_parser = subparsers.add_parser("bitwarden", help="операции Bitwarden")
+    bitwarden_subparsers = bitwarden_parser.add_subparsers(dest="bitwarden_command", required=True)
+    bw_push = bitwarden_subparsers.add_parser("push-from-keyring", help="создать/обновить записи Bitwarden из keyring")
+    bw_push.add_argument("names", nargs="*")
+    bw_push.add_argument("--folder", default="DataBase_MP")
+    bw_push.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -73,6 +90,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             from app.ops.jobs_status import print_jobs_status
 
             return print_jobs_status(limit=max(1, args.limit))
+
+        if args.command == "audit":
+            from app.ops.tool_checks import run_project_audit
+
+            return run_project_audit()
+
+        if args.command == "checks":
+            from app.ops.tool_checks import run_checks
+
+            return run_checks(args.names)
 
         if args.command == "secrets":
             from app.ops.secrets import (
@@ -99,6 +126,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return normalize_postgres_secrets(overwrite_password=args.overwrite_password)
             if args.secrets_command == "clean-env":
                 return clean_env_file(path=args.path, backend=args.backend)
+
+        if args.command == "bitwarden":
+            from tools.sync_bitwarden_from_keyring import main as sync_bitwarden_main
+
+            forwarded = []
+            if args.folder:
+                forwarded.extend(["--folder", args.folder])
+            if args.dry_run:
+                forwarded.append("--dry-run")
+            forwarded.extend(args.names)
+            if args.bitwarden_command == "push-from-keyring":
+                return sync_bitwarden_main(forwarded)
     except RuntimeError as exc:
         print(f"Ошибка: {exc}")
         return 1

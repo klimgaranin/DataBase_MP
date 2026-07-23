@@ -47,8 +47,7 @@ REQUIRED_REFERENCES = {
         "PROJECT_STANDARDS.md",
     ],
     "workflows/release_check.md": [
-        "python tools/ai_workflow_check.py",
-        "python tools/project_standards_check.py",
+        "python -m app.cli checks",
         "python -m unittest discover -s tests",
     ],
 }
