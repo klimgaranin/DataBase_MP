@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from app.ops.secrets import clean_env_file
+from app.ops.secrets import clean_env_file, pull_from_bitwarden
 from app.secrets import EnvSecretBackend, KeyringSecretBackend, get_secret, secret_status, split_pg_dsn_password
 
 
@@ -103,6 +103,26 @@ class SecretBackendTests(unittest.TestCase):
             self.assertIn("# POSTGRES_PASSWORD хранится в secret backend", text)
             self.assertIn("# WB_TOKEN хранится в secret backend", text)
             self.assertNotIn("=secret", text)
+
+    def test_pull_from_bitwarden_updates_keyring_without_printing_values(self) -> None:
+        saved: dict[str, str] = {}
+        fake_backend = SimpleNamespace(
+            get=lambda name: saved.get(name),
+            exists=lambda name: name in saved,
+            set=lambda name, value: saved.__setitem__(name, value),
+            delete=lambda name: False,
+        )
+
+        with (
+            patch("app.ops.secrets.get_keyring_backend", return_value=fake_backend),
+            patch("app.ops.secrets.keyring_secret_status", return_value={"OZON_API_KEY": False}),
+            patch("app.ops.bitwarden.load_bitwarden_secrets", return_value={"OZON_API_KEY": "secret-value"}),
+            redirect_stdout(StringIO()) as output,
+        ):
+            self.assertEqual(pull_from_bitwarden(["OZON_API_KEY"]), 0)
+
+        self.assertEqual(saved, {"OZON_API_KEY": "secret-value"})
+        self.assertNotIn("secret-value", output.getvalue())
 
 
 if __name__ == "__main__":

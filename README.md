@@ -550,6 +550,14 @@ Manager в Bitwarden, используется:
 .\.venv\Scripts\python.exe tools\sync_bitwarden_from_keyring.py
 ```
 
+Если токен изменён в Bitwarden и его нужно подтянуть обратно в рабочее
+хранилище jobs:
+
+```powershell
+$env:BW_SESSION = $(bw unlock --raw)
+.\.venv\Scripts\python.exe -m app.cli secrets pull-from-bitwarden
+```
+
 Безопасный переход:
 
 ```powershell

@@ -44,7 +44,40 @@ WB-токен сейчас общий. Если отдельные `WB_TOKEN_CON
 `WB_ANALYTICS_TOKEN`, `WB_SUPPLIES_TOKEN` не заданы, проект использует
 `WB_TOKEN`.
 
-## Как перенести секрет из Bitwarden в рабочий запуск
+## Как подтянуть секреты из Bitwarden в рабочий запуск
+
+Когда секрет создан или изменён в Bitwarden, его нужно подтянуть в Windows
+Credential Manager одной командой:
+
+```powershell
+cd C:\Програмирование\Проекты\DataBase_MP
+.\.venv\Scripts\python.exe -m app.cli secrets pull-from-bitwarden
+```
+
+Команда берёт записи из папки `DataBase_MP` с именами вида
+`DataBase_MP / SECRET_NAME` и обновляет одноимённые секреты в keyring.
+
+Подтянуть один секрет:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli secrets pull-from-bitwarden OZON_API_KEY
+```
+
+Не перезаписывать уже заданные значения:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli secrets pull-from-bitwarden --no-overwrite
+```
+
+Bitwarden CLI должен быть разблокирован:
+
+```powershell
+$env:BW_SESSION = $(bw unlock --raw)
+```
+
+Команда не печатает значения секретов.
+
+## Как вручную перенести секрет из Bitwarden в рабочий запуск
 
 1. Открыть Bitwarden Desktop.
 2. Найти запись, например `DataBase_MP / OZON_API_KEY`.

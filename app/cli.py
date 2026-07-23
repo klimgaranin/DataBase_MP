@@ -37,6 +37,11 @@ def build_parser() -> argparse.ArgumentParser:
     secrets_migrate.add_argument("names", nargs="*")
     secrets_migrate.add_argument("--overwrite", action="store_true")
 
+    secrets_pull_bw = secrets_subparsers.add_parser("pull-from-bitwarden", help="подтянуть секреты из Bitwarden в keyring")
+    secrets_pull_bw.add_argument("names", nargs="*")
+    secrets_pull_bw.add_argument("--folder", default="DataBase_MP")
+    secrets_pull_bw.add_argument("--no-overwrite", action="store_true")
+
     secrets_pg = secrets_subparsers.add_parser("normalize-postgres", help="разделить PG_DSN и POSTGRES_PASSWORD")
     secrets_pg.add_argument("--overwrite-password", action="store_true")
 
@@ -75,6 +80,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             migrate_from_env,
             normalize_postgres_secrets,
             print_secrets_status,
+            pull_from_bitwarden,
             set_secret,
         )
 
@@ -86,6 +92,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return delete_secret(args.name)
         if args.secrets_command == "migrate-from-env":
             return migrate_from_env(args.names, overwrite=args.overwrite)
+        if args.secrets_command == "pull-from-bitwarden":
+            return pull_from_bitwarden(args.names, folder=args.folder, overwrite=not args.no_overwrite)
         if args.secrets_command == "normalize-postgres":
             return normalize_postgres_secrets(overwrite_password=args.overwrite_password)
         if args.secrets_command == "clean-env":

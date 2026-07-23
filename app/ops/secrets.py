@@ -101,6 +101,39 @@ def migrate_from_env(names: Sequence[str] | None = None, *, overwrite: bool = Fa
     return 0
 
 
+def pull_from_bitwarden(names: Sequence[str] | None = None, *, folder: str = "DataBase_MP", overwrite: bool = True) -> int:
+    from app.ops.bitwarden import load_bitwarden_secrets
+
+    selected = _selected_names(names)
+    bitwarden_values = load_bitwarden_secrets(folder_name=folder)
+    keyring_backend = get_keyring_backend()
+    current = keyring_secret_status(selected)
+
+    updated = 0
+    skipped_existing = 0
+    missing = 0
+    for name in selected:
+        value = bitwarden_values.get(name)
+        if not value:
+            missing += 1
+            print(f"{name}: нет записи в Bitwarden")
+            continue
+        if current.get(name) and not overwrite:
+            skipped_existing += 1
+            print(f"{name}: уже есть в keyring, пропущен")
+            continue
+        keyring_backend.set(name, value)
+        updated += 1
+        print(f"{name}: обновлён в keyring из Bitwarden")
+
+    print(
+        "Итог: "
+        f"обновлено={updated}, уже было={skipped_existing}, "
+        f"не найдено в Bitwarden={missing}"
+    )
+    return 0
+
+
 def normalize_postgres_secrets(*, overwrite_password: bool = False) -> int:
     keyring_backend = get_keyring_backend()
     dsn = get_secret("PG_DSN") or ""
@@ -204,6 +237,11 @@ def build_parser() -> argparse.ArgumentParser:
     clean_env.add_argument("--path", default=".env")
     clean_env.add_argument("--backend", choices=("env", "keyring"), default="keyring")
 
+    pull_bw = subparsers.add_parser("pull-from-bitwarden", help="подтянуть секреты из Bitwarden в keyring")
+    pull_bw.add_argument("names", nargs="*", help="имена секретов, по умолчанию ключевые секреты проекта")
+    pull_bw.add_argument("--folder", default="DataBase_MP")
+    pull_bw.add_argument("--no-overwrite", action="store_true", help="не перезаписывать уже заданные keyring секреты")
+
     return parser
 
 
@@ -217,6 +255,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return delete_secret(args.name)
     if args.command == "migrate-from-env":
         return migrate_from_env(args.names, overwrite=args.overwrite)
+    if args.command == "pull-from-bitwarden":
+        return pull_from_bitwarden(args.names, folder=args.folder, overwrite=not args.no_overwrite)
     if args.command == "normalize-postgres":
         return normalize_postgres_secrets(overwrite_password=args.overwrite_password)
     if args.command == "clean-env":
