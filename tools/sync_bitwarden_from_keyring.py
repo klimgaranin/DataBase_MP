@@ -11,7 +11,12 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Iterable
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from app.secrets import SENSITIVE_SECRET_NAMES, get_keyring_backend
 
