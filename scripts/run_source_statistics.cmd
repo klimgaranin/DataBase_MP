@@ -7,4 +7,6 @@ set VENV=%ROOT%\.venv\Scripts\python.exe
 set JOB=%ROOT%\app\jobs\job_source_statistics.py
 if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
 "%VENV%" "%JOB%"
+set JOBEXIT=%ERRORLEVEL%
 endlocal
+exit /b %JOBEXIT%
