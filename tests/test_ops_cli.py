@@ -25,6 +25,11 @@ class OpsCliTests(unittest.TestCase):
         self.assertEqual(args.command, "checks")
         self.assertEqual(args.names, ["audit"])
 
+    def test_cli_parser_accepts_checks_without_names(self) -> None:
+        args = build_parser().parse_args(["checks"])
+        self.assertEqual(args.command, "checks")
+        self.assertEqual(args.names, [])
+
     def test_cli_parser_accepts_bitwarden_push_command(self) -> None:
         args = build_parser().parse_args(["bitwarden", "push-from-keyring", "--dry-run", "WB_TOKEN"])
         self.assertEqual(args.command, "bitwarden")

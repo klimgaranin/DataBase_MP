@@ -25,7 +25,6 @@ def build_parser() -> argparse.ArgumentParser:
     checks_parser.add_argument(
         "names",
         nargs="*",
-        choices=("ai-workflow", "project-standards", "audit"),
         help="какие проверки запустить; по умолчанию все",
     )
 
