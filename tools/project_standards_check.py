@@ -66,6 +66,7 @@ ALLOWED_ROOT_DIRS = {
     ".vscode",
     "app",
     "archive",
+    "docs",
     "evidence",
     "infra",
     "local",

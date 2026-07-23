@@ -537,6 +537,11 @@ Credential Manager через `keyring`.
 действующие Windows jobs. Production-режим должен хранить секреты через
 `keyring`, то есть через Windows Credential Manager.
 
+Для человека главный сейф — Bitwarden Desktop. В нём удобно хранить реальные
+токены и пароли с понятными названиями. В рабочий запуск проекта секреты
+переносятся из Bitwarden в Windows Credential Manager через команды ниже.
+Подробная инструкция: `docs/secret-management.md`.
+
 Безопасный переход:
 
 ```powershell
