@@ -31,6 +31,7 @@ dist/
 pip-wheel-metadata/
 
 .idea/
+.agents/
 .codex/
 AGENTS.md
 .vscode/
