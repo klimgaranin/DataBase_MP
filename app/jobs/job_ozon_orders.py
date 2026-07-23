@@ -96,7 +96,7 @@ def _load_job_config() -> dict[str, object]:
     lookback_minutes = max(0, min(int(os.getenv("OZON_ORDERS_LOOKBACK_MINUTES", "180")), 24 * 60))
     debug_sleep = max(0, min(int(os.getenv("DEBUG_SLEEP_AFTER_LOCK_SECONDS", "0")), 3600))
     dry_run = os.getenv("OZON_ORDERS_DRY_RUN", "0").strip().lower() in {"1", "true", "yes"}
-    log_file = (os.getenv("OZON_ORDERS_LOG_FILE") or "").strip() or None
+    log_file = (os.getenv("OZON_ORDERS_LOG_FILE") or "").strip() or "logs/job_ozon_orders.log"
     return {
         "first_run_start": first_run_start,
         "since_override": since_override,

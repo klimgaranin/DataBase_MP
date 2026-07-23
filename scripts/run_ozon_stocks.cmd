@@ -8,5 +8,4 @@ set JOB=%ROOT%\app\jobs\job_ozon_stocks.py
 if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
 "%VENV%" "%JOB%"
 set JOBEXIT=%ERRORLEVEL%
-endlocal
-exit /b %JOBEXIT%
+endlocal & exit /b %JOBEXIT%

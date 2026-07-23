@@ -121,7 +121,7 @@ $action  = New-ScheduledTaskAction -Execute "cmd.exe" `
            -Argument "/c `"C:\Програмирование\Проекты\DataBase_MP\scripts\run_wb_orders.cmd`""
 $trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 60) -Once -At "00:00"
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
-Register-ScheduledTask -TaskPath "\MarketplaceDB\" -TaskName "WB_Orders_Sync" `
+Register-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Orders_Sync" `
     -Action $action -Trigger $trigger -Settings $settings
 ```
 
@@ -132,7 +132,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register_ozon_orders_task.ps1
 ```
 
 Задача в Планировщике будет называться
-`\MarketplaceDB\Ozon_Orders_Sync`. Она запускает
+`\DB_MP\Ozon_Orders_Sync`. Она запускает
 `scripts\run_ozon_orders.cmd`, который пишет текущие строки заказов Ozon,
 raw-ответы API и историю изменений отправлений.
 
@@ -143,7 +143,7 @@ $action  = New-ScheduledTaskAction -Execute "cmd.exe" `
            -Argument "/c `"C:\Програмирование\Проекты\DataBase_MP\scripts\run_wb_stocks.cmd`""
 $trigger = New-ScheduledTaskTrigger -RepetitionInterval (New-TimeSpan -Minutes 30) -Once -At "00:00"
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable
-Register-ScheduledTask -TaskPath "\MarketplaceDB\" -TaskName "WB_Stocks_Sync" `
+Register-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Stocks_Sync" `
     -Action $action -Trigger $trigger -Settings $settings
 ```
 
@@ -439,17 +439,17 @@ LIMIT 20;
 
 ```powershell
 # Запустить вручную
-Start-ScheduledTask -TaskPath "\MarketplaceDB\" -TaskName "WB_Orders_Sync"
-Start-ScheduledTask -TaskPath "\MarketplaceDB\" -TaskName "WB_Stocks_Sync"
+Start-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Orders_Sync"
+Start-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Stocks_Sync"
 
 # Приостановить (например перед бэкфиллом)
-Disable-ScheduledTask -TaskPath "\MarketplaceDB\" -TaskName "WB_Orders_Sync"
+Disable-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Orders_Sync"
 
 # Возобновить
-Enable-ScheduledTask -TaskPath "\MarketplaceDB\" -TaskName "WB_Orders_Sync"
+Enable-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Orders_Sync"
 
 # Статус последнего запуска (0 = успех)
-Get-ScheduledTaskInfo -TaskPath "\MarketplaceDB\" -TaskName "WB_Orders_Sync" |
+Get-ScheduledTaskInfo -TaskPath "\DB_MP\" -TaskName "WB_Orders_Sync" |
     Select LastRunTime, LastTaskResult, NextRunTime
 ```
 

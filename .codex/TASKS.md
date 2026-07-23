@@ -101,7 +101,7 @@
   изменений добавлена view `analytics.ozon_fbo_posting_change_history_flat`.
 - Добавлен Windows-скрипт регистрации регулярной задачи Ozon FBO orders:
   `scripts/register_ozon_orders_task.ps1`. По умолчанию создаёт/обновляет
-  `\MarketplaceDB\Ozon_Orders_Sync` с запуском каждый час.
+  `\DB_MP\Ozon_Orders_Sync` с запуском каждый час.
 - Ozon stocks/products приведены к тому же правилу: product list/info и
   analytics stocks раскрыты в колонки, из сохранённого raw восстановлена
   `staging.ozon_stock_details`, добавлены плоские views
