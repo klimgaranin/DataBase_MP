@@ -37,7 +37,7 @@ class FakeSheetsClient:
         values: list[list[object]],
     ) -> dict[str, object]:
         self.updated.append((start_cell, values))
-        return {"updatedRange": f"{sheet_name}!{start_cell}:L{len(values)}", "updatedCells": len(values) * 5}
+        return {"updatedRange": f"{sheet_name}!{start_cell}:K{len(values)}", "updatedCells": len(values) * 4}
 
     def batch_update_values(
         self,
@@ -47,7 +47,7 @@ class FakeSheetsClient:
         updates: list[tuple[str, list[list[object]]]],
     ) -> dict[str, object]:
         self.batch_updated.extend(updates)
-        return {"totalUpdatedCells": sum(len(rows) * 5 for _, rows in updates)}
+        return {"totalUpdatedCells": sum(len(rows) * 4 for _, rows in updates)}
 
 
 class SheetsExportTests(unittest.TestCase):
@@ -58,15 +58,14 @@ class SheetsExportTests(unittest.TestCase):
                 article="21045",
                 quantity=2,
                 amount=Decimal("2700.00"),
-                status="awaiting_packaging",
             )
         ]
 
         self.assertEqual(
             build_ozon_order_sheet_values(rows),
             [
-                ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
-                ["02.08.2026", "21045", 2, 2700, "Ожидает сборки"],
+                ["Дата", "Артикул", "Кол-во", "Сумма"],
+                ["02.08.2026", "21045", 2, 2700],
             ],
         )
 
@@ -81,16 +80,16 @@ class SheetsExportTests(unittest.TestCase):
     def test_sync_sheet_table_updates_only_changed_rows(self) -> None:
         client = FakeSheetsClient(
             [
-                ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
-                ["02.08.2026", "21045", "2", "2700", "Ожидает сборки"],
-                ["02.08.2026", "14252", "1", "300", "Ожидает сборки"],
+                ["Дата", "Артикул", "Кол-во", "Сумма"],
+                ["02.08.2026", "21045", "2", "2700"],
+                ["02.08.2026", "14252", "1", "300"],
             ]
         )
         values = [
-            ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
-            ["02.08.2026", "21045", 2, 2700, "Ожидает сборки"],
-            ["02.08.2026", "14252", 2, 600, "Ожидает сборки"],
-            ["02.08.2026", "10569", 1, 280, "Ожидает сборки"],
+            ["Дата", "Артикул", "Кол-во", "Сумма"],
+            ["02.08.2026", "21045", 2, 2700],
+            ["02.08.2026", "14252", 2, 600],
+            ["02.08.2026", "10569", 1, 280],
         ]
 
         result = sync_sheet_table(
@@ -107,19 +106,19 @@ class SheetsExportTests(unittest.TestCase):
         self.assertEqual(result.appended_rows, 1)
         self.assertEqual(result.stale_rows, 0)
         self.assertEqual(client.cleared, [])
-        self.assertEqual(client.batch_updated[0][0], "H3:L3")
-        self.assertEqual(client.batch_updated[1][0], "H4:L4")
+        self.assertEqual(client.batch_updated[0][0], "H3:K3")
+        self.assertEqual(client.batch_updated[1][0], "H4:K4")
 
     def test_sync_sheet_table_replaces_when_stale_rows_exist(self) -> None:
         client = FakeSheetsClient(
             [
-                ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
-                ["01.05.2026", "OLD", "1", "100", "Доставлен"],
+                ["Дата", "Артикул", "Кол-во", "Сумма"],
+                ["01.05.2026", "OLD", "1", "100"],
             ]
         )
         values = [
-            ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
-            ["01.06.2026", "NEW", 1, 200, "Доставлен"],
+            ["Дата", "Артикул", "Кол-во", "Сумма"],
+            ["01.06.2026", "NEW", 1, 200],
         ]
 
         result = sync_sheet_table(
@@ -133,18 +132,18 @@ class SheetsExportTests(unittest.TestCase):
 
         self.assertEqual(result.mode, "replace-stale")
         self.assertEqual(result.stale_rows, 1)
-        self.assertEqual(client.cleared, ["H:L"])
+        self.assertEqual(client.cleared, ["H:K"])
         self.assertEqual(client.updated[0][0], "H1")
 
     def test_plan_sheet_table_sync_does_not_write(self) -> None:
         existing = [
-            ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
-            ["02.08.2026", "21045", "2", "2700", "Ожидает сборки"],
+            ["Дата", "Артикул", "Кол-во", "Сумма"],
+            ["02.08.2026", "21045", "2", "2700"],
         ]
         values = [
-            ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
-            ["02.08.2026", "21045", 2, 2700, "Ожидает сборки"],
-            ["02.08.2026", "10569", 1, 280, "Ожидает сборки"],
+            ["Дата", "Артикул", "Кол-во", "Сумма"],
+            ["02.08.2026", "21045", 2, 2700],
+            ["02.08.2026", "10569", 1, 280],
         ]
 
         plan = plan_sheet_table_sync(existing=existing, start_cell="H1", values=values, mode="upsert")
@@ -152,7 +151,7 @@ class SheetsExportTests(unittest.TestCase):
         self.assertFalse(plan.cleared)
         self.assertEqual(plan.unchanged_rows, 1)
         self.assertEqual(plan.appended_rows, 1)
-        self.assertEqual(plan.updated_cells, 5)
+        self.assertEqual(plan.updated_cells, 4)
 
 
 if __name__ == "__main__":

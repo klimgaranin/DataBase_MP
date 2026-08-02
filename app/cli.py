@@ -86,7 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sheets_wb_orders.add_argument("--spreadsheet-id")
     sheets_wb_orders.add_argument("--sheet-name", default="DATA 2")
-    sheets_wb_orders.add_argument("--start-cell", default="N1")
+    sheets_wb_orders.add_argument("--start-cell", default="M1")
     sheets_wb_orders.add_argument("--date-from", help="YYYY-MM-DD")
     sheets_wb_orders.add_argument("--date-to", help="YYYY-MM-DD")
     sheets_wb_orders.add_argument("--limit", type=int)

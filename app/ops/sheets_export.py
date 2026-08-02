@@ -11,23 +11,10 @@ from app.config import ROOT, get_config
 from app.db import connect
 
 
-ORDER_EXPORT_HEADERS = ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"]
+ORDER_EXPORT_HEADERS = ["Дата", "Артикул", "Кол-во", "Сумма"]
 DEFAULT_ORDERS_SHEET_NAME = "DATA 2"
 DEFAULT_OZON_START_CELL = "H1"
-DEFAULT_WB_START_CELL = "N1"
-
-OZON_STATUS_LABELS = {
-    "awaiting_packaging": "Ожидает сборки",
-    "awaiting_deliver": "Ожидает отгрузки",
-    "delivering": "Доставляется",
-    "delivered": "Доставлен",
-    "cancelled": "Отменён",
-}
-
-WB_STATUS_LABELS = {
-    "active": "Заказ",
-    "cancelled": "Отменён",
-}
+DEFAULT_WB_START_CELL = "M1"
 
 
 @dataclass(frozen=True)
@@ -36,7 +23,6 @@ class OrderSheetRow:
     article: str
     quantity: int
     amount: Decimal
-    status: str
 
 
 @dataclass(frozen=True)
@@ -81,14 +67,6 @@ def default_orders_date_to(today: date | None = None) -> date:
     return today or date.today()
 
 
-def format_ozon_status(status: str) -> str:
-    return OZON_STATUS_LABELS.get(status, status)
-
-
-def format_wb_status(status: str) -> str:
-    return WB_STATUS_LABELS.get(status, status)
-
-
 def format_sheet_date(value: date) -> str:
     return value.strftime("%d.%m.%Y")
 
@@ -105,7 +83,6 @@ def build_order_sheet_values(
     *,
     marketplace: Literal["ozon", "wb"],
 ) -> list[list[Any]]:
-    formatter = format_ozon_status if marketplace == "ozon" else format_wb_status
     values: list[list[Any]] = [ORDER_EXPORT_HEADERS]
     for row in rows:
         values.append(
@@ -114,7 +91,6 @@ def build_order_sheet_values(
                 row.article,
                 row.quantity,
                 _amount_to_sheet_value(row.amount),
-                formatter(row.status),
             ]
         )
     return values
@@ -153,9 +129,9 @@ def _target_columns(start_cell: str, width: int) -> tuple[str, str, int]:
     return start_column, end_column, start_row
 
 
-def _row_key(row: Sequence[Any]) -> tuple[str, str, str]:
+def _row_key(row: Sequence[Any]) -> tuple[str, str]:
     padded = list(row) + [""] * (len(ORDER_EXPORT_HEADERS) - len(row))
-    return (_normalize_cell(padded[0]), _normalize_cell(padded[1]), _normalize_cell(padded[4]))
+    return (_normalize_cell(padded[0]), _normalize_cell(padded[1]))
 
 
 def _normalize_cell(value: Any) -> str:
@@ -213,7 +189,7 @@ def sync_sheet_table(
         updates.append((f"{start_column}{header_row}:{end_column}{header_row}", [ORDER_EXPORT_HEADERS]))
         header_updated = True
 
-    existing_by_key: dict[tuple[str, str, str], tuple[int, list[Any]]] = {}
+    existing_by_key: dict[tuple[str, str], tuple[int, list[Any]]] = {}
     for index, row in enumerate(existing[header_row:], start=header_row + 1):
         key = _row_key(row)
         if all(key) and key not in existing_by_key:
@@ -312,7 +288,7 @@ def plan_sheet_table_sync(
         )
 
     header_updated = not existing or _normalize_row(existing[header_row - 1] if len(existing) >= header_row else []) != ORDER_EXPORT_HEADERS
-    existing_by_key: dict[tuple[str, str, str], list[Any]] = {}
+    existing_by_key: dict[tuple[str, str], list[Any]] = {}
     for row in existing[header_row:]:
         key = _row_key(row)
         if all(key) and key not in existing_by_key:
@@ -382,12 +358,12 @@ def fetch_ozon_order_sheet_rows(
             COALESCE(created_at, in_process_at)::date AS order_date,
             COALESCE(NULLIF(product_offer_id, ''), product_sku::text, '') AS article,
             SUM(product_quantity)::int AS quantity,
-            SUM(product_price_amount * product_quantity)::numeric(14,2) AS amount,
-            COALESCE(status, '') AS status
+            SUM(product_price_amount * product_quantity)::numeric(14,2) AS amount
         FROM staging.ozon_fbo_order_items_full
         WHERE COALESCE(created_at, in_process_at)::date BETWEEN %s AND %s
-        GROUP BY 1, 2, 5
-        ORDER BY 1 ASC, 2 ASC, 5 ASC
+          AND COALESCE(status, '') <> 'cancelled'
+        GROUP BY 1, 2
+        ORDER BY 1 ASC, 2 ASC
         {limit_sql}
     """
     return _fetch_order_rows(sql, params)
@@ -411,12 +387,12 @@ def fetch_wb_order_sheet_rows(
             date_ts::date AS order_date,
             COALESCE(NULLIF(supplier_article, ''), nm_id::text, '') AS article,
             COUNT(*)::int AS quantity,
-            SUM(COALESCE(price_with_disc, finished_price, total_price, 0))::numeric(14,2) AS amount,
-            CASE WHEN COALESCE(is_cancel, FALSE) THEN 'cancelled' ELSE 'active' END AS status
+            SUM(COALESCE(price_with_disc, finished_price, total_price, 0))::numeric(14,2) AS amount
         FROM wb_orders_norm
         WHERE date_ts::date BETWEEN %s AND %s
-        GROUP BY 1, 2, 5
-        ORDER BY 1 ASC, 2 ASC, 5 ASC
+          AND COALESCE(is_cancel, FALSE) = FALSE
+        GROUP BY 1, 2
+        ORDER BY 1 ASC, 2 ASC
         {limit_sql}
     """
     return _fetch_order_rows(sql, params)
@@ -427,14 +403,13 @@ def _fetch_order_rows(sql: str, params: Sequence[Any]) -> list[OrderSheetRow]:
         with conn.cursor() as cur:
             cur.execute(sql, params)
             result = []
-            for order_date, article, quantity, amount, status in cur.fetchall():
+            for order_date, article, quantity, amount in cur.fetchall():
                 result.append(
                     OrderSheetRow(
                         order_date=order_date,
                         article=str(article or ""),
                         quantity=int(quantity or 0),
                         amount=Decimal(amount or 0),
-                        status=str(status or ""),
                     )
                 )
             return result
@@ -550,13 +525,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     ozon_orders = subparsers.add_parser(
         "ozon-orders",
-        help="выгрузить Ozon FBO заказы в формат Дата/Артикул/Кол-во/Сумма/Статус",
+        help="выгрузить Ozon FBO заказы в формат Дата/Артикул/Кол-во/Сумма",
     )
     _add_common_order_args(ozon_orders, default_start_cell=DEFAULT_OZON_START_CELL)
 
     wb_orders = subparsers.add_parser(
         "wb-orders",
-        help="выгрузить WB заказы в формат Дата/Артикул/Кол-во/Сумма/Статус",
+        help="выгрузить WB заказы в формат Дата/Артикул/Кол-во/Сумма",
     )
     _add_common_order_args(wb_orders, default_start_cell=DEFAULT_WB_START_CELL)
 
