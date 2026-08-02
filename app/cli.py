@@ -65,6 +65,21 @@ def build_parser() -> argparse.ArgumentParser:
     bw_push.add_argument("--folder", default="DataBase_MP")
     bw_push.add_argument("--dry-run", action="store_true")
 
+    sheets_parser = subparsers.add_parser("sheets", help="экспорт данных в Google Sheets")
+    sheets_subparsers = sheets_parser.add_subparsers(dest="sheets_command", required=True)
+    sheets_ozon_orders = sheets_subparsers.add_parser(
+        "ozon-orders",
+        help="выгрузить Ozon FBO заказы в DATA 2",
+    )
+    sheets_ozon_orders.add_argument("--spreadsheet-id")
+    sheets_ozon_orders.add_argument("--sheet-name", default="DATA 2")
+    sheets_ozon_orders.add_argument("--start-cell", default="H1")
+    sheets_ozon_orders.add_argument("--clear-range", default="H:L")
+    sheets_ozon_orders.add_argument("--date-from", help="YYYY-MM-DD")
+    sheets_ozon_orders.add_argument("--date-to", help="YYYY-MM-DD")
+    sheets_ozon_orders.add_argument("--limit", type=int)
+    sheets_ozon_orders.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -137,6 +152,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             forwarded.extend(args.names)
             if args.bitwarden_command == "push-from-keyring":
                 return sync_bitwarden_main(forwarded)
+
+        if args.command == "sheets":
+            from app.ops.sheets_export import main as sheets_export_main
+
+            forwarded = [args.sheets_command]
+            for attr, option in [
+                ("spreadsheet_id", "--spreadsheet-id"),
+                ("sheet_name", "--sheet-name"),
+                ("start_cell", "--start-cell"),
+                ("clear_range", "--clear-range"),
+                ("date_from", "--date-from"),
+                ("date_to", "--date-to"),
+            ]:
+                value = getattr(args, attr)
+                if value:
+                    forwarded.extend([option, value])
+            if args.limit is not None:
+                forwarded.extend(["--limit", str(args.limit)])
+            if args.dry_run:
+                forwarded.append("--dry-run")
+            return sheets_export_main(forwarded)
     except RuntimeError as exc:
         print(f"Ошибка: {exc}")
         return 1

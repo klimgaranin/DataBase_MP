@@ -291,6 +291,23 @@ http://localhost:8080/admin
 Карта логики для переноса в PostgreSQL/Web ведётся в
 `../Developer_Knowledge/projects/DataBase_MP/ANALYTICS_MP_LOGIC.md`.
 
+### Экспорт данных из PostgreSQL в Google Таблицу
+
+Ozon FBO заказы можно выгрузить из PostgreSQL в таблицу `Аналитика МП` на лист
+`DATA 2`, начиная с колонки `H`. Формат колонок:
+`Дата`, `Артикул`, `Кол-во`, `Сумма`, `Статус`.
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli sheets ozon-orders
+```
+
+Команда очищает диапазон `DATA 2!H:L` и записывает свежие агрегированные данные
+из `staging.ozon_fbo_order_items_full`. Для проверки без записи:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli sheets ozon-orders --dry-run
+```
+
 Новая миграция `migrations/V10__marketplace_analytics_foundation.sql` создаёт
 отдельные схемы `raw`, `staging`, `core`, `analytics` и первые таблицы для
 будущего модуля аналитики. Она не меняет старые production-таблицы `public.wb_*`.
