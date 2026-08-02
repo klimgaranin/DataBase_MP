@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+import re
 from typing import Any, Literal, Sequence
 
 from app.config import ROOT, get_config
@@ -137,6 +138,13 @@ def _row_key(row: Sequence[Any]) -> tuple[str, str]:
 def _normalize_cell(value: Any) -> str:
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
+    text = str(value).strip().replace("\xa0", "").replace(" ", "")
+    numeric_text = text.replace(",", ".")
+    if re.fullmatch(r"-?\d+(?:\.\d+)?", numeric_text):
+        amount = Decimal(numeric_text).normalize()
+        if amount == amount.to_integral_value():
+            return str(int(amount))
+        return format(amount, "f").rstrip("0").rstrip(".")
     return str(value).strip()
 
 
@@ -363,7 +371,7 @@ def fetch_ozon_order_sheet_rows(
         WHERE COALESCE(created_at, in_process_at)::date BETWEEN %s AND %s
           AND COALESCE(status, '') <> 'cancelled'
         GROUP BY 1, 2
-        ORDER BY 1 ASC, 2 ASC
+        ORDER BY 1 DESC, 2 ASC
         {limit_sql}
     """
     return _fetch_order_rows(sql, params)
@@ -392,7 +400,7 @@ def fetch_wb_order_sheet_rows(
         WHERE date_ts::date BETWEEN %s AND %s
           AND COALESCE(is_cancel, FALSE) = FALSE
         GROUP BY 1, 2
-        ORDER BY 1 ASC, 2 ASC
+        ORDER BY 1 DESC, 2 ASC
         {limit_sql}
     """
     return _fetch_order_rows(sql, params)

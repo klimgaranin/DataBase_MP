@@ -153,6 +153,22 @@ class SheetsExportTests(unittest.TestCase):
         self.assertEqual(plan.appended_rows, 1)
         self.assertEqual(plan.updated_cells, 4)
 
+    def test_plan_sheet_table_sync_treats_decimal_comma_as_same_number(self) -> None:
+        existing = [
+            ["Дата", "Артикул", "Кол-во", "Сумма"],
+            ["01.06.2026", "10031", "2", "617,5"],
+        ]
+        values = [
+            ["Дата", "Артикул", "Кол-во", "Сумма"],
+            ["01.06.2026", "10031", 2, 617.5],
+        ]
+
+        plan = plan_sheet_table_sync(existing=existing, start_cell="M1", values=values, mode="upsert")
+
+        self.assertEqual(plan.unchanged_rows, 1)
+        self.assertEqual(plan.changed_rows, 0)
+        self.assertEqual(plan.updated_cells, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
