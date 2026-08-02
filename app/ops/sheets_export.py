@@ -14,7 +14,7 @@ from app.db import connect
 ORDER_EXPORT_HEADERS = ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"]
 DEFAULT_ORDERS_SHEET_NAME = "DATA 2"
 DEFAULT_OZON_START_CELL = "H1"
-DEFAULT_WB_START_CELL = "C1"
+DEFAULT_WB_START_CELL = "N1"
 
 OZON_STATUS_LABELS = {
     "awaiting_packaging": "Ожидает сборки",
