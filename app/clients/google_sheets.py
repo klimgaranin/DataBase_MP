@@ -36,6 +36,16 @@ class GoogleSheetsClient:
             .execute()
         )
 
+    def get_values(self, *, spreadsheet_id: str, sheet_name: str, a1_range: str) -> list[list[Any]]:
+        full_range = f"{quote_sheet_name(sheet_name)}!{a1_range}"
+        result = (
+            self._service.spreadsheets()
+            .values()
+            .get(spreadsheetId=spreadsheet_id, range=full_range)
+            .execute()
+        )
+        return result.get("values", [])
+
     def update_values(
         self,
         *,
@@ -53,6 +63,30 @@ class GoogleSheetsClient:
                 range=full_range,
                 valueInputOption="USER_ENTERED",
                 body={"values": values},
+            )
+            .execute()
+        )
+
+    def batch_update_values(
+        self,
+        *,
+        spreadsheet_id: str,
+        sheet_name: str,
+        updates: list[tuple[str, list[list[Any]]]],
+    ) -> dict[str, Any]:
+        data = [
+            {
+                "range": f"{quote_sheet_name(sheet_name)}!{a1_range}",
+                "values": values,
+            }
+            for a1_range, values in updates
+        ]
+        return (
+            self._service.spreadsheets()
+            .values()
+            .batchUpdate(
+                spreadsheetId=spreadsheet_id,
+                body={"valueInputOption": "USER_ENTERED", "data": data},
             )
             .execute()
         )

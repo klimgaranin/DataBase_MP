@@ -5,7 +5,49 @@ from datetime import date
 from decimal import Decimal
 
 from app.clients.google_sheets import quote_sheet_name
-from app.ops.sheets_export import OzonOrderSheetRow, build_ozon_order_sheet_values
+from app.ops.sheets_export import (
+    OzonOrderSheetRow,
+    build_ozon_order_sheet_values,
+    default_orders_date_from,
+    plan_sheet_table_sync,
+    sync_sheet_table,
+)
+
+
+class FakeSheetsClient:
+    def __init__(self, existing: list[list[object]]) -> None:
+        self.existing = existing
+        self.cleared: list[str] = []
+        self.updated: list[tuple[str, list[list[object]]]] = []
+        self.batch_updated: list[tuple[str, list[list[object]]]] = []
+
+    def get_values(self, *, spreadsheet_id: str, sheet_name: str, a1_range: str) -> list[list[object]]:
+        return self.existing
+
+    def clear_values(self, *, spreadsheet_id: str, sheet_name: str, a1_range: str) -> dict[str, object]:
+        self.cleared.append(a1_range)
+        return {}
+
+    def update_values(
+        self,
+        *,
+        spreadsheet_id: str,
+        sheet_name: str,
+        start_cell: str,
+        values: list[list[object]],
+    ) -> dict[str, object]:
+        self.updated.append((start_cell, values))
+        return {"updatedRange": f"{sheet_name}!{start_cell}:L{len(values)}", "updatedCells": len(values) * 5}
+
+    def batch_update_values(
+        self,
+        *,
+        spreadsheet_id: str,
+        sheet_name: str,
+        updates: list[tuple[str, list[list[object]]]],
+    ) -> dict[str, object]:
+        self.batch_updated.extend(updates)
+        return {"totalUpdatedCells": sum(len(rows) * 5 for _, rows in updates)}
 
 
 class SheetsExportTests(unittest.TestCase):
@@ -31,6 +73,86 @@ class SheetsExportTests(unittest.TestCase):
     def test_quote_sheet_name_escapes_apostrophe(self) -> None:
         self.assertEqual(quote_sheet_name("DATA 2"), "'DATA 2'")
         self.assertEqual(quote_sheet_name("Manager's DATA"), "'Manager''s DATA'")
+
+    def test_default_orders_date_from_is_previous_two_full_months_and_current_month(self) -> None:
+        self.assertEqual(default_orders_date_from(date(2026, 8, 2)), date(2026, 6, 1))
+        self.assertEqual(default_orders_date_from(date(2026, 1, 15)), date(2025, 11, 1))
+
+    def test_sync_sheet_table_updates_only_changed_rows(self) -> None:
+        client = FakeSheetsClient(
+            [
+                ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
+                ["02.08.2026", "21045", "2", "2700", "Ожидает сборки"],
+                ["02.08.2026", "14252", "1", "300", "Ожидает сборки"],
+            ]
+        )
+        values = [
+            ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
+            ["02.08.2026", "21045", 2, 2700, "Ожидает сборки"],
+            ["02.08.2026", "14252", 2, 600, "Ожидает сборки"],
+            ["02.08.2026", "10569", 1, 280, "Ожидает сборки"],
+        ]
+
+        result = sync_sheet_table(
+            client=client,
+            spreadsheet_id="spreadsheet",
+            sheet_name="DATA 2",
+            start_cell="H1",
+            values=values,
+            mode="upsert",
+        )
+
+        self.assertEqual(result.unchanged_rows, 1)
+        self.assertEqual(result.changed_rows, 1)
+        self.assertEqual(result.appended_rows, 1)
+        self.assertEqual(result.stale_rows, 0)
+        self.assertEqual(client.cleared, [])
+        self.assertEqual(client.batch_updated[0][0], "H3:L3")
+        self.assertEqual(client.batch_updated[1][0], "H4:L4")
+
+    def test_sync_sheet_table_replaces_when_stale_rows_exist(self) -> None:
+        client = FakeSheetsClient(
+            [
+                ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
+                ["01.05.2026", "OLD", "1", "100", "Доставлен"],
+            ]
+        )
+        values = [
+            ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
+            ["01.06.2026", "NEW", 1, 200, "Доставлен"],
+        ]
+
+        result = sync_sheet_table(
+            client=client,
+            spreadsheet_id="spreadsheet",
+            sheet_name="DATA 2",
+            start_cell="H1",
+            values=values,
+            mode="upsert",
+        )
+
+        self.assertEqual(result.mode, "replace-stale")
+        self.assertEqual(result.stale_rows, 1)
+        self.assertEqual(client.cleared, ["H:L"])
+        self.assertEqual(client.updated[0][0], "H1")
+
+    def test_plan_sheet_table_sync_does_not_write(self) -> None:
+        existing = [
+            ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
+            ["02.08.2026", "21045", "2", "2700", "Ожидает сборки"],
+        ]
+        values = [
+            ["Дата", "Артикул", "Кол-во", "Сумма", "Статус"],
+            ["02.08.2026", "21045", 2, 2700, "Ожидает сборки"],
+            ["02.08.2026", "10569", 1, 280, "Ожидает сборки"],
+        ]
+
+        plan = plan_sheet_table_sync(existing=existing, start_cell="H1", values=values, mode="upsert")
+
+        self.assertFalse(plan.cleared)
+        self.assertEqual(plan.unchanged_rows, 1)
+        self.assertEqual(plan.appended_rows, 1)
+        self.assertEqual(plan.updated_cells, 5)
 
 
 if __name__ == "__main__":

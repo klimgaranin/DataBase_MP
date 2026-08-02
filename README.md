@@ -291,18 +291,38 @@ http://localhost:8080/admin
 Карта логики для переноса в PostgreSQL/Web ведётся в
 `../Developer_Knowledge/projects/DataBase_MP/ANALYTICS_MP_LOGIC.md`.
 
-### Экспорт данных из PostgreSQL в Google Таблицу
+### Экспорт заказов из PostgreSQL в Google Таблицу
 
-Ozon FBO заказы можно выгрузить из PostgreSQL в таблицу `Аналитика МП` на лист
-`DATA 2`, начиная с колонки `H`. Формат колонок:
-`Дата`, `Артикул`, `Кол-во`, `Сумма`, `Статус`.
+Заказы WB и Ozon выгружаются из PostgreSQL в таблицу `Аналитика МП` на лист
+`DATA 2` в одинаковом формате: `Дата`, `Артикул`, `Кол-во`, `Сумма`, `Статус`.
+
+Окно данных по умолчанию: текущий месяц, полный прошлый месяц и полный
+позапрошлый месяц. Например, 02.08.2026 выгружается период с 01.06.2026 по
+02.08.2026.
+
+Размещение блоков на листе:
+
+- WB: `B:F`;
+- колонка `G`: пустой разделитель;
+- Ozon: `H:L`.
+
+Обычный режим обновляет только новые и изменившиеся строки. Если в блоке
+остались строки старее нужного 3-месячного окна, блок очищается и собирается
+заново, чтобы лист не накапливал старые месяцы.
 
 ```powershell
+.\.venv\Scripts\python.exe -m app.cli sheets wb-orders
 .\.venv\Scripts\python.exe -m app.cli sheets ozon-orders
 ```
 
-Команда очищает диапазон `DATA 2!H:L` и записывает свежие агрегированные данные
-из `staging.ozon_fbo_order_items_full`. Для проверки без записи:
+Для разовой полной пересборки блока:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli sheets wb-orders --mode replace
+.\.venv\Scripts\python.exe -m app.cli sheets ozon-orders --mode replace
+```
+
+Для проверки без записи:
 
 ```powershell
 .\.venv\Scripts\python.exe -m app.cli sheets ozon-orders --dry-run

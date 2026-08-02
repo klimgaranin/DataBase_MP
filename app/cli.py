@@ -74,11 +74,24 @@ def build_parser() -> argparse.ArgumentParser:
     sheets_ozon_orders.add_argument("--spreadsheet-id")
     sheets_ozon_orders.add_argument("--sheet-name", default="DATA 2")
     sheets_ozon_orders.add_argument("--start-cell", default="H1")
-    sheets_ozon_orders.add_argument("--clear-range", default="H:L")
     sheets_ozon_orders.add_argument("--date-from", help="YYYY-MM-DD")
     sheets_ozon_orders.add_argument("--date-to", help="YYYY-MM-DD")
     sheets_ozon_orders.add_argument("--limit", type=int)
+    sheets_ozon_orders.add_argument("--mode", choices=("upsert", "replace"), default="upsert")
     sheets_ozon_orders.add_argument("--dry-run", action="store_true")
+
+    sheets_wb_orders = sheets_subparsers.add_parser(
+        "wb-orders",
+        help="выгрузить WB заказы в DATA 2",
+    )
+    sheets_wb_orders.add_argument("--spreadsheet-id")
+    sheets_wb_orders.add_argument("--sheet-name", default="DATA 2")
+    sheets_wb_orders.add_argument("--start-cell", default="B1")
+    sheets_wb_orders.add_argument("--date-from", help="YYYY-MM-DD")
+    sheets_wb_orders.add_argument("--date-to", help="YYYY-MM-DD")
+    sheets_wb_orders.add_argument("--limit", type=int)
+    sheets_wb_orders.add_argument("--mode", choices=("upsert", "replace"), default="upsert")
+    sheets_wb_orders.add_argument("--dry-run", action="store_true")
 
     return parser
 
@@ -161,7 +174,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ("spreadsheet_id", "--spreadsheet-id"),
                 ("sheet_name", "--sheet-name"),
                 ("start_cell", "--start-cell"),
-                ("clear_range", "--clear-range"),
                 ("date_from", "--date-from"),
                 ("date_to", "--date-to"),
             ]:
@@ -170,6 +182,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     forwarded.extend([option, value])
             if args.limit is not None:
                 forwarded.extend(["--limit", str(args.limit)])
+            if args.mode:
+                forwarded.extend(["--mode", args.mode])
             if args.dry_run:
                 forwarded.append("--dry-run")
             return sheets_export_main(forwarded)
