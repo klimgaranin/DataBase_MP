@@ -16,6 +16,7 @@ ORDER_EXPORT_HEADERS = ["Дата", "Артикул", "Кол-во", "Сумма
 DEFAULT_ORDERS_SHEET_NAME = "DATA 2"
 DEFAULT_OZON_START_CELL = "H1"
 DEFAULT_WB_START_CELL = "M1"
+ORDER_EXPORT_TIME_ZONE = "Europe/Minsk"
 
 
 @dataclass(frozen=True)
@@ -363,12 +364,12 @@ def fetch_ozon_order_sheet_rows(
 
     sql = f"""
         SELECT
-            COALESCE(created_at, in_process_at)::date AS order_date,
+            (COALESCE(created_at, in_process_at) AT TIME ZONE '{ORDER_EXPORT_TIME_ZONE}')::date AS order_date,
             COALESCE(NULLIF(product_offer_id, ''), product_sku::text, '') AS article,
             SUM(product_quantity)::int AS quantity,
             SUM(product_price_amount * product_quantity)::numeric(14,2) AS amount
         FROM staging.ozon_fbo_order_items_full
-        WHERE COALESCE(created_at, in_process_at)::date BETWEEN %s AND %s
+        WHERE (COALESCE(created_at, in_process_at) AT TIME ZONE '{ORDER_EXPORT_TIME_ZONE}')::date BETWEEN %s AND %s
           AND COALESCE(status, '') <> 'cancelled'
         GROUP BY 1, 2
         ORDER BY 1 DESC, 2 ASC
@@ -392,12 +393,12 @@ def fetch_wb_order_sheet_rows(
 
     sql = f"""
         SELECT
-            date_ts::date AS order_date,
+            (date_ts AT TIME ZONE '{ORDER_EXPORT_TIME_ZONE}')::date AS order_date,
             COALESCE(NULLIF(supplier_article, ''), nm_id::text, '') AS article,
             COUNT(*)::int AS quantity,
             SUM(COALESCE(price_with_disc, finished_price, total_price, 0))::numeric(14,2) AS amount
         FROM wb_orders_norm
-        WHERE date_ts::date BETWEEN %s AND %s
+        WHERE (date_ts AT TIME ZONE '{ORDER_EXPORT_TIME_ZONE}')::date BETWEEN %s AND %s
           AND COALESCE(is_cancel, FALSE) = FALSE
         GROUP BY 1, 2
         ORDER BY 1 DESC, 2 ASC
