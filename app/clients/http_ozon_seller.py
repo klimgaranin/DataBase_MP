@@ -313,6 +313,19 @@ def create_placement_by_products_report(
     return str(data.get("code") or ""), response_log
 
 
+def create_placement_by_supplies_report(
+    client: OzonSellerClient,
+    *,
+    date_from: date,
+    date_to: date,
+) -> tuple[str, OzonResponseLog]:
+    payload = {"date_from": date_from.isoformat(), "date_to": date_to.isoformat()}
+    data, response_log = client.request("ozon_placement_by_supplies_create", "/v1/report/placement/by-supplies/create", payload)
+    if response_log.error:
+        raise RuntimeError(response_log.error)
+    return str(data.get("code") or ""), response_log
+
+
 def fetch_report_info(client: OzonSellerClient, *, code: str) -> tuple[dict[str, Any], OzonResponseLog]:
     data, response_log = client.request("ozon_report_info", "/v1/report/info", {"code": code})
     if response_log.error:

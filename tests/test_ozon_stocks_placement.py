@@ -12,6 +12,7 @@ from openpyxl import Workbook
 from app.clients.http_ozon_seller import (
     OzonSellerClient,
     create_placement_by_products_report,
+    create_placement_by_supplies_report,
     fetch_analytics_stocks,
     fetch_product_info_list,
     fetch_report_info,
@@ -27,6 +28,7 @@ from app.clients.local_source_files import (
     resolve_latest_file,
 )
 from app.normalize.norm_ozon_placement import parse_placement_xlsx
+from app.ops.ozon_placement_reports import download_placement_by_supplies_report
 from app.normalize.norm_ozon_stocks import (
     merge_analytics_stock_rows,
     normalize_analytics_stock,
@@ -75,6 +77,24 @@ class OzonStocksClientTests(unittest.TestCase):
 
         self.assertEqual(code, "abc")
         self.assertEqual(info["status"], "success")
+
+    def test_placement_by_supplies_report_method(self) -> None:
+        session = Mock()
+        payload = {"code": "supplies-code"}
+        response = Mock(status_code=200, content=json.dumps(payload).encode("utf-8"))
+        response.json.return_value = payload
+        session.post.return_value = response
+        client = OzonSellerClient(client_id="client", api_key="key", session=session)
+
+        code, log = create_placement_by_supplies_report(client, date_from=date(2026, 8, 5), date_to=date(2026, 8, 5))
+
+        self.assertEqual(code, "supplies-code")
+        self.assertEqual(log.method_name, "ozon_placement_by_supplies_create")
+        self.assertEqual(session.post.call_args.args[0], "https://api-seller.ozon.ru/v1/report/placement/by-supplies/create")
+        self.assertEqual(
+            session.post.call_args.kwargs["json"],
+            {"date_from": "2026-08-05", "date_to": "2026-08-05"},
+        )
 
 
 class OzonStocksNormalizationTests(unittest.TestCase):
@@ -194,6 +214,44 @@ class PlacementAndLocalFileTests(unittest.TestCase):
         self.assertEqual(rows[0]["offer_id"], "ART")
         self.assertEqual(rows[0]["placement_cost"], 63.5)
         self.assertEqual(rows[0]["payload"]["Кол-во платных экземпляров"], 2)
+
+    @patch("app.ops.ozon_placement_reports.OzonSellerClient")
+    @patch("app.ops.ozon_placement_reports.download_report_file")
+    @patch("app.ops.ozon_placement_reports.fetch_report_info")
+    @patch("app.ops.ozon_placement_reports.create_placement_by_supplies_report")
+    def test_download_placement_by_supplies_report_saves_xlsx_and_headers(
+        self,
+        create_report: Mock,
+        fetch_info: Mock,
+        download_file: Mock,
+        _client_cls: Mock,
+    ) -> None:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(["Поставка", "Склад", "Дней до первой платности"])
+        sheet.append(["SUP-1", "WH", 3])
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            xlsx_path = Path(tmp) / "supplies.xlsx"
+            workbook.save(xlsx_path)
+            workbook.close()
+            content = xlsx_path.read_bytes()
+
+            create_report.return_value = ("code/1", Mock())
+            fetch_info.return_value = ({"status": "success", "file": "https://example.test/supplies.xlsx"}, Mock())
+            download_file.return_value = content
+
+            result = download_placement_by_supplies_report(
+                date_from=date(2026, 8, 5),
+                date_to=date(2026, 8, 5),
+                output_dir=Path(tmp),
+                poll_attempts=1,
+                poll_sleep_seconds=5,
+            )
+
+        self.assertEqual(result["code"], "code/1")
+        self.assertEqual(result["rows"], 1)
+        self.assertIn("Дней до первой платности", result["headers"])
+        self.assertTrue(Path(result["path"]).name.startswith("ozon_placement_by_supplies_2026-08-05_2026-08-05_"))
 
     def test_local_file_readers(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:

@@ -489,6 +489,17 @@ scripts\run_ozon_placement.cmd
 Бизнес-вид для таблицы строится отдельно в
 `analytics.ozon_placement_latest_for_sheets`.
 
+Диагностическая проверка соседнего отчёта Ozon “по поставкам”:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli ozon placement-report by-supplies
+```
+
+Команда не пишет в БД и не меняет Google Таблицу. Она только скачивает XLSX в
+`local\reports\ozon_placement\` и показывает оригинальные колонки отчёта.
+Использовать вручную, потому что Ozon ограничивает placement-отчёты 5
+созданиями в день.
+
 Выгрузка Ozon платного хранения в Google Таблицу:
 
 ```powershell

@@ -65,6 +65,20 @@ def build_parser() -> argparse.ArgumentParser:
     bw_push.add_argument("--folder", default="DataBase_MP")
     bw_push.add_argument("--dry-run", action="store_true")
 
+    ozon_parser = subparsers.add_parser("ozon", help="ручные Ozon операции")
+    ozon_subparsers = ozon_parser.add_subparsers(dest="ozon_command", required=True)
+    ozon_placement = ozon_subparsers.add_parser("placement-report", help="ручные отчёты Ozon placement")
+    ozon_placement_subparsers = ozon_placement.add_subparsers(dest="ozon_placement_command", required=True)
+    ozon_placement_supplies = ozon_placement_subparsers.add_parser(
+        "by-supplies",
+        help="скачать тестовый отчёт стоимости размещения по поставкам",
+    )
+    ozon_placement_supplies.add_argument("--date-from")
+    ozon_placement_supplies.add_argument("--date-to")
+    ozon_placement_supplies.add_argument("--output-dir")
+    ozon_placement_supplies.add_argument("--poll-attempts", type=int)
+    ozon_placement_supplies.add_argument("--poll-sleep-seconds", type=int)
+
     sheets_parser = subparsers.add_parser("sheets", help="экспорт данных в Google Sheets")
     sheets_subparsers = sheets_parser.add_subparsers(dest="sheets_command", required=True)
     sheets_ozon_orders = sheets_subparsers.add_parser(
@@ -176,6 +190,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             forwarded.extend(args.names)
             if args.bitwarden_command == "push-from-keyring":
                 return sync_bitwarden_main(forwarded)
+
+        if args.command == "ozon":
+            from app.ops.ozon_placement_reports import main as ozon_placement_reports_main
+
+            if args.ozon_command == "placement-report":
+                forwarded = [args.ozon_placement_command]
+                for attr, option in [
+                    ("date_from", "--date-from"),
+                    ("date_to", "--date-to"),
+                    ("output_dir", "--output-dir"),
+                    ("poll_attempts", "--poll-attempts"),
+                    ("poll_sleep_seconds", "--poll-sleep-seconds"),
+                ]:
+                    value = getattr(args, attr, None)
+                    if value is not None:
+                        forwarded.extend([option, str(value)])
+                return ozon_placement_reports_main(forwarded)
 
         if args.command == "sheets":
             from app.ops.sheets_export import main as sheets_export_main
