@@ -321,6 +321,10 @@ http://localhost:8080/admin
 остались строки старее нужного 3-месячного окна, блок очищается и собирается
 заново, чтобы лист не накапливал старые месяцы.
 
+Перед записью job проверяет, сколько строк есть на листе `DATA`. Если строк
+меньше, чем нужно для подготовленной выгрузки, Google Sheets API автоматически
+добавляет недостающие строки и только потом записывает данные.
+
 ```powershell
 .\.venv\Scripts\python.exe -m app.cli sheets wb-orders
 .\.venv\Scripts\python.exe -m app.cli sheets ozon-orders
@@ -338,6 +342,10 @@ scripts\run_sheets_orders_export.cmd
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\register_sheets_orders_export_task.ps1
 ```
+
+По умолчанию задача регистрируется каждый час на 12-й минуте часа. Это сделано,
+чтобы сначала успели отработать hourly jobs обновления заказов в PostgreSQL, а
+потом через короткую паузу обновилась Google Таблица.
 
 Для разовой полной пересборки блока:
 

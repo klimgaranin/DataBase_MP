@@ -41,6 +41,7 @@ class SheetSyncResult:
     cleared: bool
     updated_range: str | None
     updated_cells: int
+    added_sheet_rows: int = 0
 
 
 @dataclass(frozen=True)
@@ -144,6 +145,22 @@ def _target_columns(start_cell: str, width: int) -> tuple[str, str, int]:
     return start_column, end_column, start_row
 
 
+def _ensure_sheet_has_rows(
+    *,
+    client: Any,
+    spreadsheet_id: str,
+    sheet_name: str,
+    start_cell: str,
+    values: list[list[Any]],
+) -> int:
+    _, _, header_row = _target_columns(start_cell, len(ORDER_EXPORT_HEADERS))
+    required_rows = header_row + max(0, len(values) - 1)
+    ensure_rows = getattr(client, "ensure_sheet_rows", None)
+    if not callable(ensure_rows):
+        return 0
+    return int(ensure_rows(spreadsheet_id=spreadsheet_id, sheet_name=sheet_name, min_rows=required_rows) or 0)
+
+
 def _row_key(row: Sequence[Any]) -> tuple[str, str]:
     padded = list(row) + [""] * (len(ORDER_EXPORT_HEADERS) - len(row))
     return (_normalize_cell(padded[0]), _normalize_cell(padded[1]))
@@ -178,6 +195,13 @@ def sync_sheet_table(
 ) -> SheetSyncResult:
     start_column, end_column, header_row = _target_columns(start_cell, len(ORDER_EXPORT_HEADERS))
     full_column_range = f"{start_column}:{end_column}"
+    added_sheet_rows = _ensure_sheet_has_rows(
+        client=client,
+        spreadsheet_id=spreadsheet_id,
+        sheet_name=sheet_name,
+        start_cell=start_cell,
+        values=values,
+    )
     if mode == "replace":
         client.clear_values(spreadsheet_id=spreadsheet_id, sheet_name=sheet_name, a1_range=full_column_range)
         result = client.update_values(
@@ -198,6 +222,7 @@ def sync_sheet_table(
             cleared=True,
             updated_range=result.get("updatedRange"),
             updated_cells=int(result.get("updatedCells") or 0),
+            added_sheet_rows=added_sheet_rows,
         )
 
     existing = client.get_values(
@@ -239,6 +264,7 @@ def sync_sheet_table(
             cleared=True,
             updated_range=result.get("updatedRange"),
             updated_cells=int(result.get("updatedCells") or 0),
+            added_sheet_rows=added_sheet_rows,
         )
 
     changed_rows = 0
@@ -283,6 +309,7 @@ def sync_sheet_table(
         cleared=False,
         updated_range=None,
         updated_cells=updated_cells,
+        added_sheet_rows=added_sheet_rows,
     )
 
 
@@ -551,6 +578,7 @@ def run_orders_to_sheets(
             f"обновлено {result.changed_rows}, "
             f"добавлено {result.appended_rows}, "
             f"устаревших убрано {result.stale_rows}, "
+            f"строк листа добавлено {result.added_sheet_rows}, "
             f"ячеек изменено {result.updated_cells}"
         )
     return OrderExportResult(

@@ -3,6 +3,7 @@ param(
     [string]$TaskName = "Sheets_Orders_Export",
     [string]$TaskPath = "\DB_MP\",
     [int]$IntervalMinutes = 60,
+    [int]$StartMinute = 12,
     [string]$Root = "",
     [switch]$SkipFileChecks,
     [switch]$RunNow
@@ -13,6 +14,9 @@ $ErrorActionPreference = "Stop"
 
 if ($IntervalMinutes -lt 15) {
     throw "IntervalMinutes must be at least 15"
+}
+if ($StartMinute -lt 0 -or $StartMinute -gt 59) {
+    throw "StartMinute must be between 0 and 59"
 }
 
 function Get-RootFromExistingTask {
@@ -59,7 +63,15 @@ if (-not $SkipFileChecks) {
 }
 
 $argument = "`"$hiddenRunner`" `"$jobScript`""
-$startAt = (Get-Date -Hour 0 -Minute 20 -Second 0)
+$today = Get-Date
+$startAt = Get-Date `
+    -Year $today.Year `
+    -Month $today.Month `
+    -Day $today.Day `
+    -Hour 0 `
+    -Minute $StartMinute `
+    -Second 0 `
+    -Millisecond 0
 
 $action = New-ScheduledTaskAction `
     -Execute "wscript.exe" `
@@ -92,6 +104,7 @@ if ($PSCmdlet.ShouldProcess("$TaskPath$TaskName", "Register scheduled task")) {
     Write-Host "OK: task $TaskPath$TaskName created or updated"
     Write-Host "Command: wscript.exe $argument"
     Write-Host "Interval: every $IntervalMinutes minutes"
+    Write-Host "Start minute: $StartMinute"
 
     if ($RunNow) {
         Start-ScheduledTask -TaskName $TaskName -TaskPath $TaskPath

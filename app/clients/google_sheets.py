@@ -67,6 +67,51 @@ class GoogleSheetsClient:
             .execute()
         )
 
+    def ensure_sheet_rows(self, *, spreadsheet_id: str, sheet_name: str, min_rows: int) -> int:
+        if min_rows <= 0:
+            return 0
+
+        metadata = (
+            self._service.spreadsheets()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                fields="sheets(properties(sheetId,title,gridProperties(rowCount)))",
+            )
+            .execute()
+        )
+        for sheet in metadata.get("sheets", []):
+            properties = sheet.get("properties", {})
+            if properties.get("title") != sheet_name:
+                continue
+
+            sheet_id = int(properties["sheetId"])
+            current_rows = int(properties.get("gridProperties", {}).get("rowCount") or 0)
+            rows_to_add = min_rows - current_rows
+            if rows_to_add <= 0:
+                return 0
+
+            (
+                self._service.spreadsheets()
+                .batchUpdate(
+                    spreadsheetId=spreadsheet_id,
+                    body={
+                        "requests": [
+                            {
+                                "appendDimension": {
+                                    "sheetId": sheet_id,
+                                    "dimension": "ROWS",
+                                    "length": rows_to_add,
+                                }
+                            }
+                        ]
+                    },
+                )
+                .execute()
+            )
+            return rows_to_add
+
+        raise RuntimeError(f"Лист Google Sheets не найден: {sheet_name}")
+
     def batch_update_values(
         self,
         *,

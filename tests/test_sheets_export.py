@@ -19,8 +19,10 @@ from app.ops.sheets_export import (
 
 
 class FakeSheetsClient:
-    def __init__(self, existing: list[list[object]]) -> None:
+    def __init__(self, existing: list[list[object]], *, row_count: int = 1000) -> None:
         self.existing = existing
+        self.row_count = row_count
+        self.ensured_rows: list[int] = []
         self.cleared: list[str] = []
         self.updated: list[tuple[str, list[list[object]]]] = []
         self.batch_updated: list[tuple[str, list[list[object]]]] = []
@@ -31,6 +33,12 @@ class FakeSheetsClient:
     def clear_values(self, *, spreadsheet_id: str, sheet_name: str, a1_range: str) -> dict[str, object]:
         self.cleared.append(a1_range)
         return {}
+
+    def ensure_sheet_rows(self, *, spreadsheet_id: str, sheet_name: str, min_rows: int) -> int:
+        self.ensured_rows.append(min_rows)
+        rows_to_add = max(0, min_rows - self.row_count)
+        self.row_count += rows_to_add
+        return rows_to_add
 
     def update_values(
         self,
@@ -115,9 +123,37 @@ class SheetsExportTests(unittest.TestCase):
         self.assertEqual(result.changed_rows, 1)
         self.assertEqual(result.appended_rows, 1)
         self.assertEqual(result.stale_rows, 0)
+        self.assertEqual(result.added_sheet_rows, 0)
         self.assertEqual(client.cleared, [])
         self.assertEqual(client.batch_updated[0][0], "H3:K3")
         self.assertEqual(client.batch_updated[1][0], "H4:K4")
+
+    def test_sync_sheet_table_adds_missing_sheet_rows_before_write(self) -> None:
+        client = FakeSheetsClient(
+            [
+                ["Дата", "Артикул", "Кол-во", "Сумма"],
+            ],
+            row_count=2,
+        )
+        values = [
+            ["Дата", "Артикул", "Кол-во", "Сумма"],
+            ["02.08.2026", "21045", 2, 2700],
+            ["02.08.2026", "14252", 2, 600],
+            ["02.08.2026", "10569", 1, 280],
+        ]
+
+        result = sync_sheet_table(
+            client=client,
+            spreadsheet_id="spreadsheet",
+            sheet_name="DATA 2",
+            start_cell="H1",
+            values=values,
+            mode="upsert",
+        )
+
+        self.assertEqual(client.ensured_rows, [4])
+        self.assertEqual(result.added_sheet_rows, 2)
+        self.assertEqual(client.batch_updated[-1][0], "H2:K4")
 
     def test_sync_sheet_table_replaces_when_stale_rows_exist(self) -> None:
         client = FakeSheetsClient(
