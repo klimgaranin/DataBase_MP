@@ -201,7 +201,7 @@ def main() -> int:
                 "date_from": cfg["date_from"],
                 "date_to": cfg["date_to"],
                 "status": info.get("status"),
-                "file_url": file_url,
+                "file_url": info.get("file") or "",
                 "file_sha256": file_sha,
                 "payload": info,
             },
