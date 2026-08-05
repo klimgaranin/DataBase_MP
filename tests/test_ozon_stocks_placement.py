@@ -156,6 +156,39 @@ class PlacementAndLocalFileTests(unittest.TestCase):
         self.assertEqual(rows[0]["offer_id"], "ART")
         self.assertEqual(rows[0]["placement_cost"], 12.5)
 
+    def test_parse_placement_xlsx_with_current_ozon_headers(self) -> None:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(
+            [
+                "Дата",
+                "SKU",
+                "Артикул",
+                "Категория товара",
+                "Описательный тип",
+                "Склад",
+                "Признак товара",
+                "Суммарный объем в миллилитрах",
+                "Кол-во экземпляров",
+                "Платный объем в миллилитрах",
+                "Кол-во платных экземпляров",
+                "Начисленная стоимость размещения",
+            ]
+        )
+        sheet.append(["04.08.2026", 10, "ART", "CAT", "TYPE", "WH", "", 12000, 3, 5000, 2, "63,5"])
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            xlsx_path = Path(tmp) / "placement.xlsx"
+            workbook.save(xlsx_path)
+            workbook.close()
+            content = xlsx_path.read_bytes()
+
+        rows = parse_placement_xlsx(content)
+
+        self.assertEqual(rows[0]["sku"], 10)
+        self.assertEqual(rows[0]["offer_id"], "ART")
+        self.assertEqual(rows[0]["placement_cost"], 63.5)
+        self.assertEqual(rows[0]["payload"]["Кол-во платных экземпляров"], 2)
+
     def test_local_file_readers(self) -> None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
             root = Path(tmp)
