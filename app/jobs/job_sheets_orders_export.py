@@ -59,7 +59,8 @@ def _format_result(result: OrderExportResult) -> str:
         f"лист={result.sheet_name}!{result.start_cell}, "
         f"режим={sync.mode}, без изменений={sync.unchanged_rows}, "
         f"обновлено={sync.changed_rows}, добавлено={sync.appended_rows}, "
-        f"устаревших={sync.stale_rows}, ячеек={sync.updated_cells}"
+        f"устаревших={sync.stale_rows}, строк листа добавлено={sync.added_sheet_rows}, "
+        f"ячеек={sync.updated_cells}"
     )
 
 
