@@ -49,6 +49,18 @@ from app.jobs.wb_orders_logic import (
 # ── константы ─────────────────────────────────────────────────────────────────
 JOB_NAME = "wb_orders"
 LOCK_ID  = 4_242_001
+PROJECT_ROOT = _THIS.parent.parent.parent
+
+
+def _resolve_log_file(value: str | None) -> str:
+    configured = (value or "").strip()
+    path = Path(configured) if configured else PROJECT_ROOT / "logs" / "job_wb_orders.log"
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    if path.is_absolute() and PROJECT_ROOT not in path.parents and not path.parent.exists():
+        path = PROJECT_ROOT / "logs" / "job_wb_orders.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return str(path)
 
 
 # ── конфиг ────────────────────────────────────────────────────────────────────
@@ -58,7 +70,7 @@ def _load_job_config() -> dict:
     lookback_max          = max(0,   min(int(os.getenv("WB_LOOKBACK_MAX_MINUTES",   str(max(lookback_base, 20)))), 240))
     raw_retention         = max(1,   min(int(os.getenv("WB_RAW_DEDUP_RETENTION_DAYS", "14")), 365))
     debug_sleep           = max(0,   min(int(os.getenv("DEBUG_SLEEP_AFTER_LOCK_SECONDS", "0")), 3600))
-    log_file              = (os.getenv("WB_ORDERS_LOG_FILE") or "").strip() or None
+    log_file              = _resolve_log_file(os.getenv("WB_ORDERS_LOG_FILE"))
     return dict(
         first_run_days_back=first_run_days_back,
         lookback_base=lookback_base,

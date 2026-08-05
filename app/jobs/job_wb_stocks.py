@@ -37,12 +37,24 @@ JOB_NAME           = "wb_stocks"
 LOCK_ID            = 4_242_002
 RAW_RETENTION_DAYS = int(os.getenv("WB_STOCKS_RAW_RETENTION_DAYS", "30"))
 DEBUG_SLEEP        = int(os.getenv("DEBUG_SLEEP_AFTER_LOCK_SECONDS", "0"))
+PROJECT_ROOT       = _THIS.parent.parent.parent
+
+
+def _resolve_log_file(value: str | None) -> str:
+    configured = (value or "").strip()
+    path = Path(configured) if configured else PROJECT_ROOT / "logs" / "job_wb_stocks.log"
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    if path.is_absolute() and PROJECT_ROOT not in path.parents and not path.parent.exists():
+        path = PROJECT_ROOT / "logs" / "job_wb_stocks.log"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return str(path)
 
 
 def main() -> int:
     log = setup_logging(
         JOB_NAME,
-        log_file=(os.getenv("WB_STOCKS_LOG_FILE") or "").strip() or None,
+        log_file=_resolve_log_file(os.getenv("WB_STOCKS_LOG_FILE")),
     )
 
     if not try_advisory_lock(LOCK_ID):
