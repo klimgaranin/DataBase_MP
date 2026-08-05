@@ -9,8 +9,10 @@ from app.ops.sheets_export import (
     DEFAULT_ORDERS_SHEET_NAME,
     DEFAULT_OZON_START_CELL,
     DEFAULT_WB_START_CELL,
+    OzonPlacementSheetRow,
     OzonOrderSheetRow,
     WB_ORDER_EXPORT_TIME_ZONE,
+    build_ozon_placement_sheet_values,
     build_ozon_order_sheet_values,
     default_orders_date_from,
     plan_sheet_table_sync,
@@ -78,6 +80,25 @@ class SheetsExportTests(unittest.TestCase):
             [
                 ["Дата", "Артикул", "Кол-во", "Сумма"],
                 ["02.08.2026", "21045", 2, 2700],
+            ],
+        )
+
+    def test_build_ozon_placement_sheet_values(self) -> None:
+        rows = [
+            OzonPlacementSheetRow(
+                article="21045",
+                paid_qty=2,
+                paid_liters=Decimal("12.345"),
+                daily_writeoff_rub=Decimal("37.50"),
+                days_until_first_paid=4,
+            )
+        ]
+
+        self.assertEqual(
+            build_ozon_placement_sheet_values(rows),
+            [
+                ["Артикул", "Платно, шт", "Платно, л", "Списано в день, RUB", "Дней до первой платности"],
+                ["21045", 2, 12.345, 37.5, 4],
             ],
         )
 
@@ -154,6 +175,36 @@ class SheetsExportTests(unittest.TestCase):
         self.assertEqual(client.ensured_rows, [4])
         self.assertEqual(result.added_sheet_rows, 2)
         self.assertEqual(client.batch_updated[-1][0], "H2:K4")
+
+    def test_sync_sheet_table_supports_placement_width_and_key(self) -> None:
+        headers = ["Артикул", "Платно, шт", "Платно, л", "Списано в день, RUB", "Дней до первой платности"]
+        client = FakeSheetsClient(
+            [
+                headers,
+                ["21045", "1", "2", "3", "4"],
+            ],
+        )
+        values = [
+            headers,
+            ["21045", 2, 12.345, 37.5, 4],
+            ["14252", 1, 5, 10, ""],
+        ]
+
+        result = sync_sheet_table(
+            client=client,
+            spreadsheet_id="spreadsheet",
+            sheet_name="DATA",
+            start_cell="K1",
+            values=values,
+            mode="upsert",
+            headers=headers,
+            key_columns=1,
+        )
+
+        self.assertEqual(result.changed_rows, 1)
+        self.assertEqual(result.appended_rows, 1)
+        self.assertEqual(client.batch_updated[0][0], "K2:O2")
+        self.assertEqual(client.batch_updated[1][0], "K3:O3")
 
     def test_sync_sheet_table_replaces_when_stale_rows_exist(self) -> None:
         client = FakeSheetsClient(

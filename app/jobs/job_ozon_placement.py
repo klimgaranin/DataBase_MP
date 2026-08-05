@@ -41,9 +41,11 @@ def _db_functions() -> dict[str, object]:
         advisory_unlock,
         insert_job_run,
         insert_raw_api_responses,
+        replace_ozon_placement_raw_rows,
         replace_ozon_placement_cells,
         replace_ozon_placement_rows,
         try_advisory_lock,
+        upsert_ozon_placement_report_file,
         upsert_ozon_placement_report,
     )
 
@@ -51,9 +53,11 @@ def _db_functions() -> dict[str, object]:
         "advisory_unlock": advisory_unlock,
         "insert_job_run": insert_job_run,
         "insert_raw_api_responses": insert_raw_api_responses,
+        "replace_ozon_placement_raw_rows": replace_ozon_placement_raw_rows,
         "replace_ozon_placement_cells": replace_ozon_placement_cells,
         "replace_ozon_placement_rows": replace_ozon_placement_rows,
         "try_advisory_lock": try_advisory_lock,
+        "upsert_ozon_placement_report_file": upsert_ozon_placement_report_file,
         "upsert_ozon_placement_report": upsert_ozon_placement_report,
     }
 
@@ -158,12 +162,15 @@ def main() -> int:
             },
             run_id=started_at,
         )
+        db["upsert_ozon_placement_report_file"](code=code, content=file_content, file_sha256=file_sha, run_id=started_at)
+        raw_rows = db["replace_ozon_placement_raw_rows"](rows, report_code=code, run_id=started_at)
         norm_rows = db["replace_ozon_placement_rows"](rows, report_code=code, run_id=started_at)
         placement_cells = db["replace_ozon_placement_cells"](rows, report_code=code, run_id=started_at)
         db["insert_raw_api_responses"](http_logs)
 
         log.info(
-            "Стоимость размещения Ozon: загружено строк=%d, ячеек=%d, SHA-256 файла=%s, HTTP-логов=%d",
+            "Стоимость размещения Ozon: raw строк=%d, staging строк=%d, ячеек=%d, SHA-256 файла=%s, HTTP-логов=%d",
+            raw_rows,
             norm_rows,
             placement_cells,
             file_sha,

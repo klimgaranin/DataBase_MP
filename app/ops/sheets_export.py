@@ -13,9 +13,11 @@ from app.db import connect
 
 
 ORDER_EXPORT_HEADERS = ["Дата", "Артикул", "Кол-во", "Сумма"]
+OZON_PLACEMENT_EXPORT_HEADERS = ["Артикул", "Платно, шт", "Платно, л", "Списано в день, RUB", "Дней до первой платности"]
 DEFAULT_ORDERS_SHEET_NAME = "DATA"
 DEFAULT_OZON_START_CELL = "A1"
 DEFAULT_WB_START_CELL = "F1"
+DEFAULT_OZON_PLACEMENT_START_CELL = "K1"
 OZON_ORDER_EXPORT_TIME_ZONE = "UTC"
 WB_ORDER_EXPORT_TIME_ZONE = "UTC"
 
@@ -26,6 +28,15 @@ class OrderSheetRow:
     article: str
     quantity: int
     amount: Decimal
+
+
+@dataclass(frozen=True)
+class OzonPlacementSheetRow:
+    article: str
+    paid_qty: int
+    paid_liters: Decimal
+    daily_writeoff_rub: Decimal
+    days_until_first_paid: int | None
 
 
 @dataclass(frozen=True)
@@ -51,6 +62,15 @@ class OrderExportResult:
     start_cell: str
     date_from: date
     date_to: date
+    rows_count: int
+    sync: SheetSyncResult | None
+    dry_run: bool
+
+
+@dataclass(frozen=True)
+class PlacementExportResult:
+    sheet_name: str
+    start_cell: str
     rows_count: int
     sync: SheetSyncResult | None
     dry_run: bool
@@ -94,6 +114,13 @@ def _amount_to_sheet_value(value: Decimal) -> int | float:
     return float(amount)
 
 
+def _volume_to_sheet_value(value: Decimal) -> int | float:
+    amount = value.quantize(Decimal("0.001"))
+    if amount == amount.to_integral_value():
+        return int(amount)
+    return float(amount)
+
+
 def build_order_sheet_values(
     rows: Sequence[OrderSheetRow],
     *,
@@ -114,6 +141,21 @@ def build_order_sheet_values(
 
 def build_ozon_order_sheet_values(rows: Sequence[OrderSheetRow]) -> list[list[Any]]:
     return build_order_sheet_values(rows, marketplace="ozon")
+
+
+def build_ozon_placement_sheet_values(rows: Sequence[OzonPlacementSheetRow]) -> list[list[Any]]:
+    values: list[list[Any]] = [OZON_PLACEMENT_EXPORT_HEADERS]
+    for row in rows:
+        values.append(
+            [
+                row.article,
+                row.paid_qty,
+                _volume_to_sheet_value(row.paid_liters),
+                _amount_to_sheet_value(row.daily_writeoff_rub),
+                "" if row.days_until_first_paid is None else row.days_until_first_paid,
+            ]
+        )
+    return values
 
 
 def _parse_start_cell(start_cell: str) -> tuple[str, int]:
@@ -152,8 +194,9 @@ def _ensure_sheet_has_rows(
     sheet_name: str,
     start_cell: str,
     values: list[list[Any]],
+    headers: Sequence[str],
 ) -> int:
-    _, _, header_row = _target_columns(start_cell, len(ORDER_EXPORT_HEADERS))
+    _, _, header_row = _target_columns(start_cell, len(headers))
     required_rows = header_row + max(0, len(values) - 1)
     ensure_rows = getattr(client, "ensure_sheet_rows", None)
     if not callable(ensure_rows):
@@ -161,9 +204,9 @@ def _ensure_sheet_has_rows(
     return int(ensure_rows(spreadsheet_id=spreadsheet_id, sheet_name=sheet_name, min_rows=required_rows) or 0)
 
 
-def _row_key(row: Sequence[Any]) -> tuple[str, str]:
-    padded = list(row) + [""] * (len(ORDER_EXPORT_HEADERS) - len(row))
-    return (_normalize_cell(padded[0]), _normalize_cell(padded[1]))
+def _row_key(row: Sequence[Any], *, key_columns: int) -> tuple[str, ...]:
+    padded = list(row) + [""] * key_columns
+    return tuple(_normalize_cell(value) for value in padded[:key_columns])
 
 
 def _normalize_cell(value: Any) -> str:
@@ -179,9 +222,9 @@ def _normalize_cell(value: Any) -> str:
     return str(value).strip()
 
 
-def _normalize_row(row: Sequence[Any]) -> list[str]:
-    padded = list(row) + [""] * (len(ORDER_EXPORT_HEADERS) - len(row))
-    return [_normalize_cell(value) for value in padded[: len(ORDER_EXPORT_HEADERS)]]
+def _normalize_row(row: Sequence[Any], *, width: int) -> list[str]:
+    padded = list(row) + [""] * width
+    return [_normalize_cell(value) for value in padded[:width]]
 
 
 def sync_sheet_table(
@@ -192,8 +235,12 @@ def sync_sheet_table(
     start_cell: str,
     values: list[list[Any]],
     mode: Literal["upsert", "replace"],
+    headers: Sequence[str] | None = None,
+    key_columns: int = 2,
 ) -> SheetSyncResult:
-    start_column, end_column, header_row = _target_columns(start_cell, len(ORDER_EXPORT_HEADERS))
+    table_headers = list(headers or ORDER_EXPORT_HEADERS)
+    width = len(table_headers)
+    start_column, end_column, header_row = _target_columns(start_cell, width)
     full_column_range = f"{start_column}:{end_column}"
     added_sheet_rows = _ensure_sheet_has_rows(
         client=client,
@@ -201,6 +248,7 @@ def sync_sheet_table(
         sheet_name=sheet_name,
         start_cell=start_cell,
         values=values,
+        headers=table_headers,
     )
     if mode == "replace":
         client.clear_values(spreadsheet_id=spreadsheet_id, sheet_name=sheet_name, a1_range=full_column_range)
@@ -232,17 +280,17 @@ def sync_sheet_table(
     )
     updates: list[tuple[str, list[list[Any]]]] = []
     header_updated = False
-    if not existing or _normalize_row(existing[header_row - 1] if len(existing) >= header_row else []) != ORDER_EXPORT_HEADERS:
-        updates.append((f"{start_column}{header_row}:{end_column}{header_row}", [ORDER_EXPORT_HEADERS]))
+    if not existing or _normalize_row(existing[header_row - 1] if len(existing) >= header_row else [], width=width) != table_headers:
+        updates.append((f"{start_column}{header_row}:{end_column}{header_row}", [table_headers]))
         header_updated = True
 
-    existing_by_key: dict[tuple[str, str], tuple[int, list[Any]]] = {}
+    existing_by_key: dict[tuple[str, ...], tuple[int, list[Any]]] = {}
     for index, row in enumerate(existing[header_row:], start=header_row + 1):
-        key = _row_key(row)
+        key = _row_key(row, key_columns=key_columns)
         if all(key) and key not in existing_by_key:
             existing_by_key[key] = (index, row)
 
-    target_keys = {_row_key(value_row) for value_row in values[1:] if all(_row_key(value_row))}
+    target_keys = {_row_key(value_row, key_columns=key_columns) for value_row in values[1:] if all(_row_key(value_row, key_columns=key_columns))}
     stale_keys = set(existing_by_key) - target_keys
     if stale_keys:
         client.clear_values(spreadsheet_id=spreadsheet_id, sheet_name=sheet_name, a1_range=full_column_range)
@@ -271,13 +319,13 @@ def sync_sheet_table(
     unchanged_rows = 0
     appended_rows: list[list[Any]] = []
     for value_row in values[1:]:
-        key = _row_key(value_row)
+        key = _row_key(value_row, key_columns=key_columns)
         found = existing_by_key.get(key)
         if found is None:
             appended_rows.append(value_row)
             continue
         row_number, existing_row = found
-        if _normalize_row(existing_row) == _normalize_row(value_row):
+        if _normalize_row(existing_row, width=width) == _normalize_row(value_row, width=width):
             unchanged_rows += 1
             continue
         updates.append((f"{start_column}{row_number}:{end_column}{row_number}", [value_row]))
@@ -319,8 +367,12 @@ def plan_sheet_table_sync(
     start_cell: str,
     values: list[list[Any]],
     mode: Literal["upsert", "replace"],
+    headers: Sequence[str] | None = None,
+    key_columns: int = 2,
 ) -> SheetSyncResult:
-    start_column, _, header_row = _target_columns(start_cell, len(ORDER_EXPORT_HEADERS))
+    table_headers = list(headers or ORDER_EXPORT_HEADERS)
+    width = len(table_headers)
+    start_column, _, header_row = _target_columns(start_cell, width)
     if mode == "replace":
         return SheetSyncResult(
             mode=mode,
@@ -333,17 +385,17 @@ def plan_sheet_table_sync(
             header_updated=True,
             cleared=True,
             updated_range=None,
-            updated_cells=len(values) * len(ORDER_EXPORT_HEADERS),
+            updated_cells=len(values) * width,
         )
 
-    header_updated = not existing or _normalize_row(existing[header_row - 1] if len(existing) >= header_row else []) != ORDER_EXPORT_HEADERS
-    existing_by_key: dict[tuple[str, str], list[Any]] = {}
+    header_updated = not existing or _normalize_row(existing[header_row - 1] if len(existing) >= header_row else [], width=width) != table_headers
+    existing_by_key: dict[tuple[str, ...], list[Any]] = {}
     for row in existing[header_row:]:
-        key = _row_key(row)
+        key = _row_key(row, key_columns=key_columns)
         if all(key) and key not in existing_by_key:
             existing_by_key[key] = row
 
-    target_keys = {_row_key(value_row) for value_row in values[1:] if all(_row_key(value_row))}
+    target_keys = {_row_key(value_row, key_columns=key_columns) for value_row in values[1:] if all(_row_key(value_row, key_columns=key_columns))}
     stale_keys = set(existing_by_key) - target_keys
     if stale_keys:
         return SheetSyncResult(
@@ -357,23 +409,23 @@ def plan_sheet_table_sync(
             header_updated=True,
             cleared=True,
             updated_range=None,
-            updated_cells=len(values) * len(ORDER_EXPORT_HEADERS),
+            updated_cells=len(values) * width,
         )
 
     changed_rows = 0
     unchanged_rows = 0
     appended_rows = 0
     for value_row in values[1:]:
-        existing_row = existing_by_key.get(_row_key(value_row))
+        existing_row = existing_by_key.get(_row_key(value_row, key_columns=key_columns))
         if existing_row is None:
             appended_rows += 1
-        elif _normalize_row(existing_row) == _normalize_row(value_row):
+        elif _normalize_row(existing_row, width=width) == _normalize_row(value_row, width=width):
             unchanged_rows += 1
         else:
             changed_rows += 1
 
-    header_cells = len(ORDER_EXPORT_HEADERS) if header_updated else 0
-    updated_cells = header_cells + (changed_rows + appended_rows) * len(ORDER_EXPORT_HEADERS)
+    header_cells = width if header_updated else 0
+    updated_cells = header_cells + (changed_rows + appended_rows) * width
     return SheetSyncResult(
         mode=mode,
         prepared_rows=max(0, len(values) - 1),
@@ -462,6 +514,37 @@ def _fetch_order_rows(sql: str, params: Sequence[Any]) -> list[OrderSheetRow]:
                     )
                 )
             return result
+
+
+def fetch_ozon_placement_sheet_rows(*, limit: int | None = None) -> list[OzonPlacementSheetRow]:
+    limit_sql = "LIMIT %s" if limit is not None else ""
+    params: list[Any] = []
+    if limit is not None:
+        params.append(limit)
+    sql = f"""
+        SELECT
+            article,
+            paid_qty,
+            paid_liters,
+            daily_writeoff_rub,
+            days_until_first_paid
+        FROM analytics.ozon_placement_latest_for_sheets
+        ORDER BY article
+        {limit_sql}
+    """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [
+                OzonPlacementSheetRow(
+                    article=str(article or ""),
+                    paid_qty=int(paid_qty or 0),
+                    paid_liters=Decimal(paid_liters or 0),
+                    daily_writeoff_rub=Decimal(daily_writeoff_rub or 0),
+                    days_until_first_paid=None if days_until_first_paid is None else int(days_until_first_paid),
+                )
+                for article, paid_qty, paid_liters, daily_writeoff_rub, days_until_first_paid in cur.fetchall()
+            ]
 
 
 def export_orders_to_sheets(
@@ -601,6 +684,92 @@ def export_wb_orders_to_sheets(**kwargs: Any) -> int:
     return export_orders_to_sheets(marketplace="wb", **kwargs)
 
 
+def export_ozon_placement_to_sheets(**kwargs: Any) -> int:
+    result = run_ozon_placement_to_sheets(verbose=True, **kwargs)
+    return 0 if result is not None else 1
+
+
+def run_ozon_placement_to_sheets(
+    *,
+    spreadsheet_id: str | None = None,
+    sheet_name: str = DEFAULT_ORDERS_SHEET_NAME,
+    start_cell: str = DEFAULT_OZON_PLACEMENT_START_CELL,
+    limit: int | None = None,
+    mode: Literal["upsert", "replace"] = "replace",
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> PlacementExportResult:
+    config = get_config()
+    target_spreadsheet_id = spreadsheet_id or config.analytics_mp_spreadsheet_id
+    rows = fetch_ozon_placement_sheet_rows(limit=limit)
+    values = build_ozon_placement_sheet_values(rows)
+
+    if verbose:
+        print(f"Ozon хранение: подготовлено строк: {len(rows)}")
+        print(f"Лист: {sheet_name}, стартовая ячейка: {start_cell}, режим: {mode}")
+        if rows[:3]:
+            print("Первые строки:")
+            for value_row in values[1:4]:
+                print(" | ".join(str(value) for value in value_row))
+
+    from app.clients.google_sheets import GoogleSheetsClient
+
+    client = GoogleSheetsClient(credentials_path=_resolve_project_path(config.google_application_credentials))
+    if dry_run:
+        start_column, end_column, _ = _target_columns(start_cell, len(OZON_PLACEMENT_EXPORT_HEADERS))
+        existing = client.get_values(
+            spreadsheet_id=target_spreadsheet_id,
+            sheet_name=sheet_name,
+            a1_range=f"{start_column}:{end_column}",
+        )
+        plan = plan_sheet_table_sync(
+            existing=existing,
+            start_cell=start_cell,
+            values=values,
+            mode=mode,
+            headers=OZON_PLACEMENT_EXPORT_HEADERS,
+            key_columns=1,
+        )
+        if verbose:
+            print(
+                "Dry-run план Google Sheets: "
+                f"существующих строк {plan.existing_rows}, "
+                f"без изменений {plan.unchanged_rows}, "
+                f"будет обновлено {plan.changed_rows}, "
+                f"будет добавлено {plan.appended_rows}, "
+                f"устаревших строк {plan.stale_rows}, "
+                f"очистка блока: {'да' if plan.cleared else 'нет'}, "
+                f"ожидаемо ячеек к изменению {plan.updated_cells}"
+            )
+            print("Dry-run: запись в Google Sheets не выполнялась")
+        return PlacementExportResult(sheet_name=sheet_name, start_cell=start_cell, rows_count=len(rows), sync=plan, dry_run=True)
+
+    sync = sync_sheet_table(
+        client=client,
+        spreadsheet_id=target_spreadsheet_id,
+        sheet_name=sheet_name,
+        start_cell=start_cell,
+        values=values,
+        mode=mode,
+        headers=OZON_PLACEMENT_EXPORT_HEADERS,
+        key_columns=1,
+    )
+    if verbose:
+        if sync.cleared:
+            print(f"Google Sheets: диапазон перезаписан: {sync.updated_range}")
+        print(
+            "Google Sheets: "
+            f"существующих строк {sync.existing_rows}, "
+            f"без изменений {sync.unchanged_rows}, "
+            f"обновлено {sync.changed_rows}, "
+            f"добавлено {sync.appended_rows}, "
+            f"устаревших убрано {sync.stale_rows}, "
+            f"строк листа добавлено {sync.added_sheet_rows}, "
+            f"ячеек изменено {sync.updated_cells}"
+        )
+    return PlacementExportResult(sheet_name=sheet_name, start_cell=start_cell, rows_count=len(rows), sync=sync, dry_run=False)
+
+
 def _parse_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -615,6 +784,15 @@ def _add_common_order_args(parser: argparse.ArgumentParser, *, default_start_cel
     parser.add_argument("--date-to", help="YYYY-MM-DD; по умолчанию сегодня")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--mode", choices=("upsert", "replace"), default="upsert")
+    parser.add_argument("--dry-run", action="store_true")
+
+
+def _add_common_sheet_args(parser: argparse.ArgumentParser, *, default_start_cell: str, default_mode: str) -> None:
+    parser.add_argument("--spreadsheet-id")
+    parser.add_argument("--sheet-name", default=DEFAULT_ORDERS_SHEET_NAME)
+    parser.add_argument("--start-cell", default=default_start_cell)
+    parser.add_argument("--limit", type=int)
+    parser.add_argument("--mode", choices=("upsert", "replace"), default=default_mode)
     parser.add_argument("--dry-run", action="store_true")
 
 
@@ -634,25 +812,41 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_order_args(wb_orders, default_start_cell=DEFAULT_WB_START_CELL)
 
+    ozon_placement = subparsers.add_parser(
+        "ozon-placement",
+        help="выгрузить Ozon платное хранение в DATA",
+    )
+    _add_common_sheet_args(ozon_placement, default_start_cell=DEFAULT_OZON_PLACEMENT_START_CELL, default_mode="replace")
+
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    common_kwargs = {
-        "spreadsheet_id": args.spreadsheet_id,
-        "sheet_name": args.sheet_name,
-        "start_cell": args.start_cell,
-        "date_from": _parse_date(args.date_from),
-        "date_to": _parse_date(args.date_to),
-        "limit": args.limit,
-        "mode": args.mode,
-        "dry_run": args.dry_run,
-    }
-    if args.command == "ozon-orders":
-        return export_ozon_orders_to_sheets(**common_kwargs)
-    if args.command == "wb-orders":
-        return export_wb_orders_to_sheets(**common_kwargs)
+    if args.command in {"ozon-orders", "wb-orders"}:
+        common_kwargs = {
+            "spreadsheet_id": args.spreadsheet_id,
+            "sheet_name": args.sheet_name,
+            "start_cell": args.start_cell,
+            "date_from": _parse_date(args.date_from),
+            "date_to": _parse_date(args.date_to),
+            "limit": args.limit,
+            "mode": args.mode,
+            "dry_run": args.dry_run,
+        }
+        if args.command == "ozon-orders":
+            return export_ozon_orders_to_sheets(**common_kwargs)
+        if args.command == "wb-orders":
+            return export_wb_orders_to_sheets(**common_kwargs)
+    if args.command == "ozon-placement":
+        return export_ozon_placement_to_sheets(
+            spreadsheet_id=args.spreadsheet_id,
+            sheet_name=args.sheet_name,
+            start_cell=args.start_cell,
+            limit=args.limit,
+            mode=args.mode,
+            dry_run=args.dry_run,
+        )
     return 2
 
 

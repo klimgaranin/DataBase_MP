@@ -93,6 +93,17 @@ def build_parser() -> argparse.ArgumentParser:
     sheets_wb_orders.add_argument("--mode", choices=("upsert", "replace"), default="upsert")
     sheets_wb_orders.add_argument("--dry-run", action="store_true")
 
+    sheets_ozon_placement = sheets_subparsers.add_parser(
+        "ozon-placement",
+        help="выгрузить Ozon платное хранение в DATA",
+    )
+    sheets_ozon_placement.add_argument("--spreadsheet-id")
+    sheets_ozon_placement.add_argument("--sheet-name", default="DATA")
+    sheets_ozon_placement.add_argument("--start-cell", default="K1")
+    sheets_ozon_placement.add_argument("--limit", type=int)
+    sheets_ozon_placement.add_argument("--mode", choices=("upsert", "replace"), default="replace")
+    sheets_ozon_placement.add_argument("--dry-run", action="store_true")
+
     return parser
 
 
@@ -177,7 +188,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ("date_from", "--date-from"),
                 ("date_to", "--date-to"),
             ]:
-                value = getattr(args, attr)
+                value = getattr(args, attr, None)
                 if value:
                     forwarded.extend([option, value])
             if args.limit is not None:

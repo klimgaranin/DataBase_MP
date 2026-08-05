@@ -37,7 +37,8 @@ DataBase_MP/
 │   │   ├── job_wb_stocks.py        # WB остатки
 │   │   ├── job_ozon_orders.py      # Ozon FBO заказы
 │   │   ├── job_ozon_stocks.py      # Ozon остатки
-│   │   └── job_ozon_placement.py   # Ozon стоимость размещения
+│   │   ├── job_ozon_placement.py   # Ozon стоимость размещения в БД
+│   │   └── job_sheets_ozon_placement_export.py # Ozon хранение в Google Sheets
 │   ├── normalize/
 │   │   ├── norm_wb_orders.py       # Нормализация WB
 │   │   └── norm_ozon_orders.py     # Нормализация Ozon
@@ -481,13 +482,30 @@ scripts\run_ozon_placement.cmd
 `app\jobs\job_ozon_placement.py` создаёт асинхронный отчёт
 `/v1/report/placement/by-products/create`, ждёт готовности через
 `/v1/report/info`, скачивает XLSX и сохраняет raw-отчёт в
-`raw.ozon_placement_reports`, строки отчёта — в
-`staging.ozon_placement_by_products`.
+`raw.ozon_placement_reports`, исходный XLSX — в
+`raw.ozon_placement_report_files`, полные строки с оригинальными колонками —
+в `raw.ozon_placement_report_rows`. Технический разобранный слой хранится в
+`staging.ozon_placement_by_products` и `staging.ozon_placement_cells`.
+Бизнес-вид для таблицы строится отдельно в
+`analytics.ozon_placement_latest_for_sheets`.
+
+Выгрузка Ozon платного хранения в Google Таблицу:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli sheets ozon-placement
+scripts\run_sheets_ozon_placement_export.cmd
+```
+
+Назначение: лист `DATA`, колонки `K:O`.
+Формат: `Артикул`, `Платно, шт`, `Платно, л`, `Списано в день, RUB`,
+`Дней до первой платности`.
 
 Расписание:
 
 - `ozon_orders` — каждый час;
 - `ozon_placement` — один раз утром;
+- `sheets_ozon_placement_export` — один раз утром через 2 минуты после
+  `ozon_placement`;
 - `ozon_stocks` — два раза в день, в соответствии с лимитами/рекомендациями
   Ozon swagger.
 
@@ -602,6 +620,9 @@ Credential Manager через `keyring`.
 | `OZON_PLACEMENT_DATE_TO`       | ❌           | вчера        | Конец периода отчёта placement        |
 | `OZON_PLACEMENT_POLL_ATTEMPTS` | ❌           | `20`         | Сколько раз ждать готовность отчёта   |
 | `OZON_PLACEMENT_POLL_SLEEP_SECONDS` | ❌      | `30`         | Пауза между проверками отчёта         |
+| `SHEETS_OZON_PLACEMENT_EXPORT_LOG_FILE` | ❌  | `logs/job_sheets_ozon_placement_export.log` | Файл лога выгрузки Ozon хранения в Google Sheets |
+| `SHEETS_OZON_PLACEMENT_EXPORT_MODE` | ❌     | `replace`    | Режим обновления блока `DATA!K:O`     |
+| `SHEETS_OZON_PLACEMENT_EXPORT_DRY_RUN` | ❌  | `0`          | Проверить Sheets job без записи       |
 | `OZON_STOCKS_LOG_FILE`         | ❌           | —            | Файл лога Ozon stocks job             |
 | `OZON_STOCKS_DRY_RUN`          | ❌           | `0`          | Проверить stocks без API/БД           |
 | `SOURCE_STATISTICS_FILE`       | ❌           | `local/source_exports/Статистика.xlsm` | Файл источника статистики |
