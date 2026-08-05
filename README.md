@@ -293,8 +293,8 @@ http://localhost:8080/admin
 
 ### Экспорт заказов из PostgreSQL в Google Таблицу
 
-Заказы WB и Ozon выгружаются из PostgreSQL в таблицу `Аналитика МП` на лист
-`DATA 2` в одинаковом формате: `Дата`, `Артикул`, `Кол-во`, `Сумма`.
+Заказы WB и Ozon выгружаются из PostgreSQL в таблицу `Аналитика МП` на скрытый
+лист `DATA` в одинаковом формате: `Дата`, `Артикул`, `Кол-во`, `Сумма`.
 Отменённые заказы не выгружаются.
 
 Окно данных по умолчанию: текущий месяц, полный прошлый месяц и полный
@@ -304,13 +304,18 @@ http://localhost:8080/admin
 Даты считаются так:
 
 - Ozon — по дате из ЛК/Ozon CSV (`Принят в обработку`), то есть по UTC-дате API;
-- WB — по минскому времени (`Europe/Minsk`).
+- WB — по UTC-дате API, чтобы совпадать с эталонной CSV-выгрузкой заказов.
 
 Размещение блоков на листе:
 
-- Ozon: `H:K`;
-- колонка `L`: пустой разделитель;
-- WB: `M:P`.
+- Ozon: `A:D`;
+- колонка `E`: пустой разделитель;
+- WB: `F:I`.
+
+Важно: если лист `DATA` защищён, service account из
+`GOOGLE_APPLICATION_CREDENTIALS` должен быть добавлен в редакторы защищённых
+диапазонов `DATA!A:D` и `DATA!F:I`, иначе Google API вернёт ошибку
+`protected cell`.
 
 Обычный режим обновляет только новые и изменившиеся строки. Если в блоке
 остались строки старее нужного 3-месячного окна, блок очищается и собирается
@@ -319,6 +324,19 @@ http://localhost:8080/admin
 ```powershell
 .\.venv\Scripts\python.exe -m app.cli sheets wb-orders
 .\.venv\Scripts\python.exe -m app.cli sheets ozon-orders
+```
+
+Штатная combined job с логом, `job_runs` и Telegram-алертом:
+
+```powershell
+scripts\run_sheets_orders_export.cmd
+```
+
+Регистрация плановой задачи Windows, после проверки прав service account на
+защищённые диапазоны листа `DATA`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\register_sheets_orders_export_task.ps1
 ```
 
 Для разовой полной пересборки блока:
@@ -548,6 +566,9 @@ Credential Manager через `keyring`.
 | `APP_SECRET_SERVICE_NAME`      | ❌           | `DataBase_MP`| Имя сервиса для Windows Credential Manager |
 | `GOOGLE_SHEETS_ANALYTICS_MP_SPREADSHEET_ID` | ❌ | ID таблицы `Аналитика МП` | Таблица-эталон для аудита |
 | `GOOGLE_APPLICATION_CREDENTIALS` | ❌         | `secrets/google-service-account.json` | Путь к service account JSON |
+| `SHEETS_ORDERS_EXPORT_LOG_FILE` | ❌          | `logs/job_sheets_orders_export.log` | Файл лога выгрузки заказов в Google Sheets |
+| `SHEETS_ORDERS_EXPORT_MODE`     | ❌          | `upsert`     | Режим выгрузки заказов: `upsert` или `replace` |
+| `SHEETS_ORDERS_EXPORT_DRY_RUN`  | ❌          | `0`          | Проверить Sheets job без записи        |
 | `WB_TOKEN`                     | ✅           | —            | Секрет: общий токен WB API             |
 | `WB_TOKEN_CONTENT`             | ❌           | `WB_TOKEN`   | Опциональный отдельный токен WB Advertising API |
 | `PG_DSN`                       | ✅           | —            | Настройка подключения к PostgreSQL без пароля |

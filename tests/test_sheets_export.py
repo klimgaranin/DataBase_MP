@@ -6,7 +6,11 @@ from decimal import Decimal
 
 from app.clients.google_sheets import quote_sheet_name
 from app.ops.sheets_export import (
+    DEFAULT_ORDERS_SHEET_NAME,
+    DEFAULT_OZON_START_CELL,
+    DEFAULT_WB_START_CELL,
     OzonOrderSheetRow,
+    WB_ORDER_EXPORT_TIME_ZONE,
     build_ozon_order_sheet_values,
     default_orders_date_from,
     plan_sheet_table_sync,
@@ -76,6 +80,12 @@ class SheetsExportTests(unittest.TestCase):
     def test_default_orders_date_from_is_previous_two_full_months_and_current_month(self) -> None:
         self.assertEqual(default_orders_date_from(date(2026, 8, 2)), date(2026, 6, 1))
         self.assertEqual(default_orders_date_from(date(2026, 1, 15)), date(2025, 11, 1))
+
+    def test_production_order_export_defaults(self) -> None:
+        self.assertEqual(DEFAULT_ORDERS_SHEET_NAME, "DATA")
+        self.assertEqual(DEFAULT_OZON_START_CELL, "A1")
+        self.assertEqual(DEFAULT_WB_START_CELL, "F1")
+        self.assertEqual(WB_ORDER_EXPORT_TIME_ZONE, "UTC")
 
     def test_sync_sheet_table_updates_only_changed_rows(self) -> None:
         client = FakeSheetsClient(

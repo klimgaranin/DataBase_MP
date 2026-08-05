@@ -69,11 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
     sheets_subparsers = sheets_parser.add_subparsers(dest="sheets_command", required=True)
     sheets_ozon_orders = sheets_subparsers.add_parser(
         "ozon-orders",
-        help="выгрузить Ozon FBO заказы в DATA 2",
+        help="выгрузить Ozon FBO заказы в DATA",
     )
     sheets_ozon_orders.add_argument("--spreadsheet-id")
-    sheets_ozon_orders.add_argument("--sheet-name", default="DATA 2")
-    sheets_ozon_orders.add_argument("--start-cell", default="H1")
+    sheets_ozon_orders.add_argument("--sheet-name", default="DATA")
+    sheets_ozon_orders.add_argument("--start-cell", default="A1")
     sheets_ozon_orders.add_argument("--date-from", help="YYYY-MM-DD")
     sheets_ozon_orders.add_argument("--date-to", help="YYYY-MM-DD")
     sheets_ozon_orders.add_argument("--limit", type=int)
@@ -82,11 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     sheets_wb_orders = sheets_subparsers.add_parser(
         "wb-orders",
-        help="выгрузить WB заказы в DATA 2",
+        help="выгрузить WB заказы в DATA",
     )
     sheets_wb_orders.add_argument("--spreadsheet-id")
-    sheets_wb_orders.add_argument("--sheet-name", default="DATA 2")
-    sheets_wb_orders.add_argument("--start-cell", default="M1")
+    sheets_wb_orders.add_argument("--sheet-name", default="DATA")
+    sheets_wb_orders.add_argument("--start-cell", default="F1")
     sheets_wb_orders.add_argument("--date-from", help="YYYY-MM-DD")
     sheets_wb_orders.add_argument("--date-to", help="YYYY-MM-DD")
     sheets_wb_orders.add_argument("--limit", type=int)

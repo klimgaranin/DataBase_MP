@@ -13,11 +13,11 @@ from app.db import connect
 
 
 ORDER_EXPORT_HEADERS = ["Дата", "Артикул", "Кол-во", "Сумма"]
-DEFAULT_ORDERS_SHEET_NAME = "DATA 2"
-DEFAULT_OZON_START_CELL = "H1"
-DEFAULT_WB_START_CELL = "M1"
+DEFAULT_ORDERS_SHEET_NAME = "DATA"
+DEFAULT_OZON_START_CELL = "A1"
+DEFAULT_WB_START_CELL = "F1"
 OZON_ORDER_EXPORT_TIME_ZONE = "UTC"
-WB_ORDER_EXPORT_TIME_ZONE = "Europe/Minsk"
+WB_ORDER_EXPORT_TIME_ZONE = "UTC"
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,18 @@ class SheetSyncResult:
     cleared: bool
     updated_range: str | None
     updated_cells: int
+
+
+@dataclass(frozen=True)
+class OrderExportResult:
+    marketplace: Literal["ozon", "wb"]
+    sheet_name: str
+    start_cell: str
+    date_from: date
+    date_to: date
+    rows_count: int
+    sync: SheetSyncResult | None
+    dry_run: bool
 
 
 OzonOrderSheetRow = OrderSheetRow
@@ -437,6 +449,34 @@ def export_orders_to_sheets(
     mode: Literal["upsert", "replace"] = "upsert",
     dry_run: bool = False,
 ) -> int:
+    result = run_orders_to_sheets(
+        marketplace=marketplace,
+        spreadsheet_id=spreadsheet_id,
+        sheet_name=sheet_name,
+        start_cell=start_cell,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+        mode=mode,
+        dry_run=dry_run,
+        verbose=True,
+    )
+    return 0 if result is not None else 1
+
+
+def run_orders_to_sheets(
+    *,
+    marketplace: Literal["ozon", "wb"],
+    spreadsheet_id: str | None = None,
+    sheet_name: str = DEFAULT_ORDERS_SHEET_NAME,
+    start_cell: str | None = None,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    limit: int | None = None,
+    mode: Literal["upsert", "replace"] = "upsert",
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> OrderExportResult:
     config = get_config()
     target_spreadsheet_id = spreadsheet_id or config.analytics_mp_spreadsheet_id
     target_start_cell = start_cell or (DEFAULT_OZON_START_CELL if marketplace == "ozon" else DEFAULT_WB_START_CELL)
@@ -450,13 +490,14 @@ def export_orders_to_sheets(
     values = build_order_sheet_values(rows, marketplace=marketplace)
 
     marketplace_label = "Ozon" if marketplace == "ozon" else "WB"
-    print(f"{marketplace_label} заказы: период {start.isoformat()} - {end.isoformat()}")
-    print(f"{marketplace_label} заказы: подготовлено агрегированных строк: {len(rows)}")
-    print(f"Лист: {sheet_name}, стартовая ячейка: {target_start_cell}, режим: {mode}")
-    if rows[:3]:
-        print("Первые строки:")
-        for value_row in values[1:4]:
-            print(" | ".join(str(value) for value in value_row))
+    if verbose:
+        print(f"{marketplace_label} заказы: период {start.isoformat()} - {end.isoformat()}")
+        print(f"{marketplace_label} заказы: подготовлено агрегированных строк: {len(rows)}")
+        print(f"Лист: {sheet_name}, стартовая ячейка: {target_start_cell}, режим: {mode}")
+        if rows[:3]:
+            print("Первые строки:")
+            for value_row in values[1:4]:
+                print(" | ".join(str(value) for value in value_row))
 
     from app.clients.google_sheets import GoogleSheetsClient
 
@@ -469,18 +510,28 @@ def export_orders_to_sheets(
             a1_range=f"{start_column}:{end_column}",
         )
         plan = plan_sheet_table_sync(existing=existing, start_cell=target_start_cell, values=values, mode=mode)
-        print(
-            "Dry-run план Google Sheets: "
-            f"существующих строк {plan.existing_rows}, "
-            f"без изменений {plan.unchanged_rows}, "
-            f"будет обновлено {plan.changed_rows}, "
-            f"будет добавлено {plan.appended_rows}, "
-            f"устаревших строк {plan.stale_rows}, "
-            f"очистка блока: {'да' if plan.cleared else 'нет'}, "
-            f"ожидаемо ячеек к изменению {plan.updated_cells}"
+        if verbose:
+            print(
+                "Dry-run план Google Sheets: "
+                f"существующих строк {plan.existing_rows}, "
+                f"без изменений {plan.unchanged_rows}, "
+                f"будет обновлено {plan.changed_rows}, "
+                f"будет добавлено {plan.appended_rows}, "
+                f"устаревших строк {plan.stale_rows}, "
+                f"очистка блока: {'да' if plan.cleared else 'нет'}, "
+                f"ожидаемо ячеек к изменению {plan.updated_cells}"
+            )
+            print("Dry-run: запись в Google Sheets не выполнялась")
+        return OrderExportResult(
+            marketplace=marketplace,
+            sheet_name=sheet_name,
+            start_cell=target_start_cell,
+            date_from=start,
+            date_to=end,
+            rows_count=len(rows),
+            sync=plan,
+            dry_run=True,
         )
-        print("Dry-run: запись в Google Sheets не выполнялась")
-        return 0
 
     result = sync_sheet_table(
         client=client,
@@ -490,18 +541,28 @@ def export_orders_to_sheets(
         values=values,
         mode=mode,
     )
-    if result.cleared:
-        print(f"Google Sheets: диапазон перезаписан: {result.updated_range}")
-    print(
-        "Google Sheets: "
-        f"существующих строк {result.existing_rows}, "
-        f"без изменений {result.unchanged_rows}, "
-        f"обновлено {result.changed_rows}, "
-        f"добавлено {result.appended_rows}, "
-        f"устаревших убрано {result.stale_rows}, "
-        f"ячеек изменено {result.updated_cells}"
+    if verbose:
+        if result.cleared:
+            print(f"Google Sheets: диапазон перезаписан: {result.updated_range}")
+        print(
+            "Google Sheets: "
+            f"существующих строк {result.existing_rows}, "
+            f"без изменений {result.unchanged_rows}, "
+            f"обновлено {result.changed_rows}, "
+            f"добавлено {result.appended_rows}, "
+            f"устаревших убрано {result.stale_rows}, "
+            f"ячеек изменено {result.updated_cells}"
+        )
+    return OrderExportResult(
+        marketplace=marketplace,
+        sheet_name=sheet_name,
+        start_cell=target_start_cell,
+        date_from=start,
+        date_to=end,
+        rows_count=len(rows),
+        sync=result,
+        dry_run=False,
     )
-    return 0
 
 
 def export_ozon_orders_to_sheets(**kwargs: Any) -> int:
