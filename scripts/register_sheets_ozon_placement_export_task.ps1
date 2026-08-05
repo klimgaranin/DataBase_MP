@@ -2,7 +2,7 @@
 param(
     [string]$TaskName = "Sheets_Ozon_Placement_Export",
     [string]$TaskPath = "\DB_MP\",
-    [string]$At = "06:32",
+    [string]$At = "07:02",
     [string]$Root = "",
     [switch]$SkipFileChecks,
     [switch]$RunNow

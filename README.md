@@ -509,6 +509,10 @@ scripts\run_sheets_ozon_placement_export.cmd
 - `ozon_stocks` — два раза в день, в соответствии с лимитами/рекомендациями
   Ozon swagger.
 
+По умолчанию `ozon_placement` запрашивает отчёт за текущую дату по Минску.
+Например, 06.08.2026 в 07:00 будет запрошен период
+`2026-08-06..2026-08-06`.
+
 Dry-run:
 
 ```powershell
@@ -616,8 +620,8 @@ Credential Manager через `keyring`.
 | `OZON_ORDERS_UNTIL`            | ❌           | —            | Ручной конец периода для разового запуска |
 | `OZON_PLACEMENT_LOG_FILE`      | ❌           | —            | Файл лога Ozon placement job          |
 | `OZON_PLACEMENT_DRY_RUN`       | ❌           | `0`          | Проверить placement без API/БД        |
-| `OZON_PLACEMENT_DATE_FROM`     | ❌           | вчера        | Начало периода отчёта placement       |
-| `OZON_PLACEMENT_DATE_TO`       | ❌           | вчера        | Конец периода отчёта placement        |
+| `OZON_PLACEMENT_DATE_FROM`     | ❌           | текущая дата Europe/Minsk | Начало периода отчёта placement |
+| `OZON_PLACEMENT_DATE_TO`       | ❌           | текущая дата Europe/Minsk | Конец периода отчёта placement   |
 | `OZON_PLACEMENT_POLL_ATTEMPTS` | ❌           | `20`         | Сколько раз ждать готовность отчёта   |
 | `OZON_PLACEMENT_POLL_SLEEP_SECONDS` | ❌      | `30`         | Пауза между проверками отчёта         |
 | `SHEETS_OZON_PLACEMENT_EXPORT_LOG_FILE` | ❌  | `logs/job_sheets_ozon_placement_export.log` | Файл лога выгрузки Ozon хранения в Google Sheets |

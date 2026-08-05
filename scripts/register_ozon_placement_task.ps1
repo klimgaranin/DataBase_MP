@@ -2,7 +2,7 @@
 param(
     [string]$TaskName = "Ozon_Placement_Sync",
     [string]$TaskPath = "\DB_MP\",
-    [string]$At = "06:30",
+    [string]$At = "07:00",
     [string]$Root = "",
     [switch]$SkipFileChecks,
     [switch]$RunNow

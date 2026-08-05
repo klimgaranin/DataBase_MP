@@ -9,9 +9,10 @@ import hashlib
 import os
 import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 _THIS = Path(__file__).resolve()
 sys.path.insert(0, str(_THIS.parent.parent))
@@ -34,6 +35,7 @@ from app.normalize.norm_ozon_placement import parse_placement_xlsx
 
 JOB_NAME = "ozon_placement"
 LOCK_ID = 4_242_203
+PLACEMENT_REPORT_TIME_ZONE = "Europe/Minsk"
 
 
 def _db_functions() -> dict[str, object]:
@@ -62,10 +64,17 @@ def _db_functions() -> dict[str, object]:
     }
 
 
+def default_placement_report_date(now: datetime | None = None) -> date:
+    current = now or datetime.now(ZoneInfo(PLACEMENT_REPORT_TIME_ZONE))
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=ZoneInfo(PLACEMENT_REPORT_TIME_ZONE))
+    return current.astimezone(ZoneInfo(PLACEMENT_REPORT_TIME_ZONE)).date()
+
+
 def _load_job_config() -> dict[str, object]:
-    yesterday = date.today() - timedelta(days=1)
-    date_from = date.fromisoformat(os.getenv("OZON_PLACEMENT_DATE_FROM", yesterday.isoformat()))
-    date_to = date.fromisoformat(os.getenv("OZON_PLACEMENT_DATE_TO", yesterday.isoformat()))
+    report_date = default_placement_report_date()
+    date_from = date.fromisoformat(os.getenv("OZON_PLACEMENT_DATE_FROM", report_date.isoformat()))
+    date_to = date.fromisoformat(os.getenv("OZON_PLACEMENT_DATE_TO", report_date.isoformat()))
     return {
         "date_from": date_from,
         "date_to": date_to,

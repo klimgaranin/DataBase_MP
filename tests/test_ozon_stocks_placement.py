@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -17,6 +17,7 @@ from app.clients.http_ozon_seller import (
     fetch_report_info,
     iter_product_list,
 )
+from app.jobs.job_ozon_placement import default_placement_report_date
 from app.clients.local_source_files import (
     read_first_sheet_rows,
     read_local_table_rows,
@@ -141,6 +142,11 @@ class OzonStocksNormalizationTests(unittest.TestCase):
 
 
 class PlacementAndLocalFileTests(unittest.TestCase):
+    def test_default_placement_report_date_uses_minsk_current_day(self) -> None:
+        value = default_placement_report_date(datetime(2026, 8, 6, 4, 0, tzinfo=timezone.utc))
+
+        self.assertEqual(value, date(2026, 8, 6))
+
     def test_parse_placement_xlsx(self) -> None:
         workbook = Workbook()
         sheet = workbook.active
