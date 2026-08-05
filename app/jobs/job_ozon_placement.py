@@ -25,6 +25,7 @@ load_env(__file__)
 from app.clients.http_ozon_seller import (
     OzonSellerClient,
     create_placement_by_products_report,
+    create_placement_by_supplies_report,
     download_report_file,
     fetch_report_info,
     response_sha256,
@@ -45,8 +46,12 @@ def _db_functions() -> dict[str, object]:
         insert_raw_api_responses,
         replace_ozon_placement_raw_rows,
         replace_ozon_placement_cells,
+        replace_ozon_placement_by_supplies_cells,
+        replace_ozon_placement_by_supplies_raw_rows,
         replace_ozon_placement_rows,
         try_advisory_lock,
+        upsert_ozon_placement_by_supplies_report,
+        upsert_ozon_placement_by_supplies_report_file,
         upsert_ozon_placement_report_file,
         upsert_ozon_placement_report,
     )
@@ -57,8 +62,12 @@ def _db_functions() -> dict[str, object]:
         "insert_raw_api_responses": insert_raw_api_responses,
         "replace_ozon_placement_raw_rows": replace_ozon_placement_raw_rows,
         "replace_ozon_placement_cells": replace_ozon_placement_cells,
+        "replace_ozon_placement_by_supplies_cells": replace_ozon_placement_by_supplies_cells,
+        "replace_ozon_placement_by_supplies_raw_rows": replace_ozon_placement_by_supplies_raw_rows,
         "replace_ozon_placement_rows": replace_ozon_placement_rows,
         "try_advisory_lock": try_advisory_lock,
+        "upsert_ozon_placement_by_supplies_report": upsert_ozon_placement_by_supplies_report,
+        "upsert_ozon_placement_by_supplies_report_file": upsert_ozon_placement_by_supplies_report_file,
         "upsert_ozon_placement_report_file": upsert_ozon_placement_report_file,
         "upsert_ozon_placement_report": upsert_ozon_placement_report,
     }
@@ -81,6 +90,7 @@ def _load_job_config() -> dict[str, object]:
         "poll_attempts": max(1, min(int(os.getenv("OZON_PLACEMENT_POLL_ATTEMPTS", "20")), 120)),
         "poll_sleep_seconds": max(5, min(int(os.getenv("OZON_PLACEMENT_POLL_SLEEP_SECONDS", "30")), 300)),
         "dry_run": os.getenv("OZON_PLACEMENT_DRY_RUN", "0").strip().lower() in {"1", "true", "yes"},
+        "include_supplies": os.getenv("OZON_PLACEMENT_INCLUDE_SUPPLIES", "1").strip().lower() not in {"0", "false", "no"},
         "log_file": (os.getenv("OZON_PLACEMENT_LOG_FILE") or "").strip() or None,
     }
 
@@ -106,6 +116,40 @@ def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _wait_report_file(
+    *,
+    client: OzonSellerClient,
+    code: str,
+    report_label: str,
+    poll_attempts: int,
+    poll_sleep_seconds: int,
+    run_id: str,
+    http_logs: list[dict],
+    log,
+) -> tuple[dict, bytes, str, list[dict]]:
+    info = {}
+    for attempt in range(1, poll_attempts + 1):
+        info, response_log = fetch_report_info(client, code=code)
+        http_logs.append(_http_log(run_id, response_log))
+        report_status = info.get("status")
+        log.info("Стоимость размещения Ozon: %s, проверка готовности %d, статус=%s", report_label, attempt, report_status)
+        if report_status == "success":
+            break
+        if report_status == "failed":
+            raise RuntimeError(f"Стоимость размещения Ozon: {report_label}, отчёт завершился ошибкой: {info.get('error')}")
+        time.sleep(poll_sleep_seconds)
+    else:
+        raise RuntimeError(f"Стоимость размещения Ozon: {report_label}, отчёт не был готов за отведённое время")
+
+    file_url = info.get("file") or ""
+    if not file_url:
+        raise RuntimeError(f"Стоимость размещения Ozon: {report_label}, отчёт готов, но ссылка на файл отсутствует")
+    file_content = download_report_file(file_url)
+    file_sha = _sha256(file_content)
+    rows = parse_placement_xlsx(file_content)
+    return info, file_content, file_sha, rows
+
+
 def main() -> int:
     cfg = _load_job_config()
     log = setup_logging(JOB_NAME, log_file=cfg["log_file"] if isinstance(cfg["log_file"], str) else None)
@@ -127,6 +171,8 @@ def main() -> int:
     api_rows = 0
     norm_rows = 0
     code = ""
+    supplies_code = ""
+    supplies_rows_count = 0
     http_logs: list[dict] = []
 
     try:
@@ -135,28 +181,18 @@ def main() -> int:
         http_logs.append(_http_log(started_at, response_log))
         if not code:
             raise RuntimeError("Стоимость размещения Ozon: API не вернул код отчёта")
-        log.info("Стоимость размещения Ozon: отчёт создан, код=%s, период=%s..%s", code, cfg["date_from"], cfg["date_to"])
+        log.info("Стоимость размещения Ozon: отчёт по товарам создан, код=%s, период=%s..%s", code, cfg["date_from"], cfg["date_to"])
 
-        info = {}
-        for attempt in range(1, int(cfg["poll_attempts"]) + 1):
-            info, response_log = fetch_report_info(client, code=code)
-            http_logs.append(_http_log(started_at, response_log))
-            report_status = info.get("status")
-            log.info("Стоимость размещения Ozon: проверка готовности %d, статус=%s", attempt, report_status)
-            if report_status == "success":
-                break
-            if report_status == "failed":
-                raise RuntimeError(f"Стоимость размещения Ozon: отчёт завершился ошибкой: {info.get('error')}")
-            time.sleep(int(cfg["poll_sleep_seconds"]))
-        else:
-            raise RuntimeError("Стоимость размещения Ozon: отчёт не был готов за отведённое время")
-
-        file_url = info.get("file") or ""
-        if not file_url:
-            raise RuntimeError("Стоимость размещения Ozon: отчёт готов, но ссылка на файл отсутствует")
-        file_content = download_report_file(file_url)
-        file_sha = _sha256(file_content)
-        rows = parse_placement_xlsx(file_content)
+        info, file_content, file_sha, rows = _wait_report_file(
+            client=client,
+            code=code,
+            report_label="по товарам",
+            poll_attempts=int(cfg["poll_attempts"]),
+            poll_sleep_seconds=int(cfg["poll_sleep_seconds"]),
+            run_id=started_at,
+            http_logs=http_logs,
+            log=log,
+        )
         api_rows = len(rows)
 
         db["upsert_ozon_placement_report"](
@@ -175,13 +211,64 @@ def main() -> int:
         raw_rows = db["replace_ozon_placement_raw_rows"](rows, report_code=code, run_id=started_at)
         norm_rows = db["replace_ozon_placement_rows"](rows, report_code=code, run_id=started_at)
         placement_cells = db["replace_ozon_placement_cells"](rows, report_code=code, run_id=started_at)
+
+        supplies_raw_rows = 0
+        supplies_cells = 0
+        if cfg["include_supplies"]:
+            supplies_code, response_log = create_placement_by_supplies_report(client, date_from=cfg["date_from"], date_to=cfg["date_to"])
+            http_logs.append(_http_log(started_at, response_log))
+            if not supplies_code:
+                raise RuntimeError("Стоимость размещения Ozon: API не вернул код отчёта по поставкам")
+            log.info("Стоимость размещения Ozon: отчёт по поставкам создан, код=%s, период=%s..%s", supplies_code, cfg["date_from"], cfg["date_to"])
+            supplies_info, supplies_content, supplies_sha, supplies_rows = _wait_report_file(
+                client=client,
+                code=supplies_code,
+                report_label="по поставкам",
+                poll_attempts=int(cfg["poll_attempts"]),
+                poll_sleep_seconds=int(cfg["poll_sleep_seconds"]),
+                run_id=started_at,
+                http_logs=http_logs,
+                log=log,
+            )
+            supplies_rows_count = len(supplies_rows)
+            db["upsert_ozon_placement_by_supplies_report"](
+                {
+                    "code": supplies_code,
+                    "date_from": cfg["date_from"],
+                    "date_to": cfg["date_to"],
+                    "status": supplies_info.get("status"),
+                    "file_url": supplies_info.get("file") or "",
+                    "file_sha256": supplies_sha,
+                    "payload": supplies_info,
+                },
+                run_id=started_at,
+            )
+            db["upsert_ozon_placement_by_supplies_report_file"](
+                code=supplies_code,
+                content=supplies_content,
+                file_sha256=supplies_sha,
+                run_id=started_at,
+            )
+            supplies_raw_rows = db["replace_ozon_placement_by_supplies_raw_rows"](
+                supplies_rows,
+                report_code=supplies_code,
+                run_id=started_at,
+            )
+            supplies_cells = db["replace_ozon_placement_by_supplies_cells"](
+                supplies_rows,
+                report_code=supplies_code,
+                run_id=started_at,
+            )
+
         db["insert_raw_api_responses"](http_logs)
 
         log.info(
-            "Стоимость размещения Ozon: raw строк=%d, staging строк=%d, ячеек=%d, SHA-256 файла=%s, HTTP-логов=%d",
+            "Стоимость размещения Ozon: товары raw=%d, товары staging=%d, товары ячеек=%d, поставки raw=%d, поставки ячеек=%d, SHA-256 товаров=%s, HTTP-логов=%d",
             raw_rows,
             norm_rows,
             placement_cells,
+            supplies_raw_rows,
+            supplies_cells,
             file_sha,
             len(http_logs),
         )
@@ -201,8 +288,8 @@ def main() -> int:
                 started_at_iso=started_at,
                 finished_at_iso=finished_at,
                 status=status,
-                api_rows=api_rows,
-                raw_new_versions=1 if code else 0,
+                api_rows=api_rows + supplies_rows_count,
+                raw_new_versions=(1 if code else 0) + (1 if supplies_code else 0),
                 norm_upserted=norm_rows,
                 duplicates=0,
                 dup_pct=0.0,
@@ -216,7 +303,12 @@ def main() -> int:
 
         ts = now_msk_label()
         if status == "ok":
-            msg = f"✅ Ozon_Placement | {ts} | OK\n\n➡ Строк отчёта: {api_rows}\n\n🔄 Загружено строк: {norm_rows}"
+            msg = (
+                f"✅ Ozon_Placement | {ts} | OK\n\n"
+                f"➡ Товары строк: {api_rows}\n"
+                f"➡ Поставки строк: {supplies_rows_count}\n\n"
+                f"🔄 Загружено товарных строк: {norm_rows}"
+            )
         else:
             msg = f"❌ Ozon_Placement | {ts} | FAIL\n{(error or 'unknown')[:200]}"
         tg_send(msg, logger=log)

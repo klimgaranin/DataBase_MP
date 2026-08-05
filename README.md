@@ -479,15 +479,26 @@ Ozon placement/storage cost:
 scripts\run_ozon_placement.cmd
 ```
 
-`app\jobs\job_ozon_placement.py` создаёт асинхронный отчёт
-`/v1/report/placement/by-products/create`, ждёт готовности через
-`/v1/report/info`, скачивает XLSX и сохраняет raw-отчёт в
+`app\jobs\job_ozon_placement.py` создаёт асинхронные отчёты
+`/v1/report/placement/by-products/create` и
+`/v1/report/placement/by-supplies/create`, ждёт готовности через
+`/v1/report/info`, скачивает XLSX и сохраняет товарный raw-отчёт в
 `raw.ozon_placement_reports`, исходный XLSX — в
 `raw.ozon_placement_report_files`, полные строки с оригинальными колонками —
 в `raw.ozon_placement_report_rows`. Технический разобранный слой хранится в
 `staging.ozon_placement_by_products` и `staging.ozon_placement_cells`.
+Отчёт по поставкам сохраняется отдельно в
+`raw.ozon_placement_by_supplies_reports`,
+`raw.ozon_placement_by_supplies_report_files`,
+`raw.ozon_placement_by_supplies_report_rows` и
+`staging.ozon_placement_by_supplies_cells`.
+
 Бизнес-вид для таблицы строится отдельно в
-`analytics.ozon_placement_latest_for_sheets`.
+`analytics.ozon_placement_latest_for_sheets`. Колонка
+`Дней до первой платности` считается по SKU через отчёт по поставкам: текущий
+остаток сравнивается с общим бесплатным объёмом, поставки сортируются по дате
+окончания бесплатного периода, и берётся первая дата, где бесплатного объёма
+становится меньше текущего остатка.
 
 Диагностическая проверка соседнего отчёта Ozon “по поставкам”:
 
@@ -635,6 +646,7 @@ Credential Manager через `keyring`.
 | `OZON_PLACEMENT_DATE_TO`       | ❌           | текущая дата Europe/Minsk | Конец периода отчёта placement   |
 | `OZON_PLACEMENT_POLL_ATTEMPTS` | ❌           | `20`         | Сколько раз ждать готовность отчёта   |
 | `OZON_PLACEMENT_POLL_SLEEP_SECONDS` | ❌      | `30`         | Пауза между проверками отчёта         |
+| `OZON_PLACEMENT_INCLUDE_SUPPLIES` | ❌        | `1`          | Загружать отчёт placement по поставкам |
 | `SHEETS_OZON_PLACEMENT_EXPORT_LOG_FILE` | ❌  | `logs/job_sheets_ozon_placement_export.log` | Файл лога выгрузки Ozon хранения в Google Sheets |
 | `SHEETS_OZON_PLACEMENT_EXPORT_MODE` | ❌     | `replace`    | Режим обновления блока `DATA!K:O`     |
 | `SHEETS_OZON_PLACEMENT_EXPORT_DRY_RUN` | ❌  | `0`          | Проверить Sheets job без записи       |

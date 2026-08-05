@@ -697,6 +697,64 @@ CREATE INDEX IF NOT EXISTS idx_ozon_placement_report_rows_payload
     ON raw.ozon_placement_report_rows USING GIN (payload);
 """
 
+_DDL_OZON_PLACEMENT_BY_SUPPLIES_REPORTS = """
+CREATE SCHEMA IF NOT EXISTS raw;
+CREATE TABLE IF NOT EXISTS raw.ozon_placement_by_supplies_reports (
+    code           TEXT        PRIMARY KEY,
+    date_from      DATE        NOT NULL,
+    date_to        DATE        NOT NULL,
+    status         TEXT,
+    file_url       TEXT,
+    file_sha256    TEXT,
+    payload        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    source_run_id  TEXT        NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
+
+_DDL_OZON_PLACEMENT_BY_SUPPLIES_REPORT_FILES = """
+CREATE SCHEMA IF NOT EXISTS raw;
+CREATE TABLE IF NOT EXISTS raw.ozon_placement_by_supplies_report_files (
+    code           TEXT        PRIMARY KEY,
+    file_sha256    TEXT        NOT NULL,
+    content        BYTEA       NOT NULL,
+    source_run_id  TEXT        NOT NULL,
+    loaded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+"""
+
+_DDL_OZON_PLACEMENT_BY_SUPPLIES_REPORT_ROWS = """
+CREATE SCHEMA IF NOT EXISTS raw;
+CREATE TABLE IF NOT EXISTS raw.ozon_placement_by_supplies_report_rows (
+    report_code    TEXT        NOT NULL,
+    row_number     INT         NOT NULL,
+    payload        JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    source_run_id  TEXT        NOT NULL,
+    loaded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (report_code, row_number)
+);
+CREATE INDEX IF NOT EXISTS idx_ozon_placement_by_supplies_report_rows_payload
+    ON raw.ozon_placement_by_supplies_report_rows USING GIN (payload);
+"""
+
+_DDL_OZON_PLACEMENT_BY_SUPPLIES_CELLS = """
+CREATE SCHEMA IF NOT EXISTS staging;
+CREATE TABLE IF NOT EXISTS staging.ozon_placement_by_supplies_cells (
+    report_code    TEXT        NOT NULL,
+    row_number     INT         NOT NULL,
+    column_number  INT         NOT NULL,
+    column_name    TEXT        NOT NULL,
+    value_text     TEXT,
+    value_numeric  NUMERIC(18,4),
+    source_run_id  TEXT        NOT NULL,
+    loaded_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (report_code, row_number, column_number)
+);
+CREATE INDEX IF NOT EXISTS idx_ozon_placement_by_supplies_cells_column
+    ON staging.ozon_placement_by_supplies_cells (column_name);
+"""
+
 
 # ── Advisory locks ────────────────────────────────────────────────────────────
 
@@ -1928,6 +1986,125 @@ def replace_ozon_placement_cells(rows: list[dict[str, Any]], *, report_code: str
                 cur,
                 """
                 INSERT INTO staging.ozon_placement_cells
+                    (report_code, row_number, column_number, column_name,
+                     value_text, value_numeric, source_run_id)
+                VALUES %s
+                """,
+                values,
+                template="(%s, %s, %s, %s, %s, %s, %s)",
+                page_size=1000,
+            )
+            return len(values)
+
+
+def upsert_ozon_placement_by_supplies_report(row: dict[str, Any], *, run_id: str) -> int:
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_DDL_OZON_PLACEMENT_BY_SUPPLIES_REPORTS)
+            cur.execute(
+                """
+                INSERT INTO raw.ozon_placement_by_supplies_reports
+                    (code, date_from, date_to, status, file_url, file_sha256, payload, source_run_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                ON CONFLICT (code) DO UPDATE SET
+                    status = EXCLUDED.status,
+                    file_url = EXCLUDED.file_url,
+                    file_sha256 = EXCLUDED.file_sha256,
+                    payload = EXCLUDED.payload,
+                    source_run_id = EXCLUDED.source_run_id,
+                    updated_at = NOW()
+                """,
+                (
+                    row.get("code"),
+                    row.get("date_from"),
+                    row.get("date_to"),
+                    row.get("status"),
+                    row.get("file_url"),
+                    row.get("file_sha256"),
+                    json.dumps(row.get("payload", {}), ensure_ascii=False, default=str),
+                    run_id,
+                ),
+            )
+            return 1
+
+
+def upsert_ozon_placement_by_supplies_report_file(*, code: str, content: bytes, file_sha256: str, run_id: str) -> int:
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_DDL_OZON_PLACEMENT_BY_SUPPLIES_REPORT_FILES)
+            cur.execute(
+                """
+                INSERT INTO raw.ozon_placement_by_supplies_report_files
+                    (code, file_sha256, content, source_run_id)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (code) DO UPDATE SET
+                    file_sha256 = EXCLUDED.file_sha256,
+                    content = EXCLUDED.content,
+                    source_run_id = EXCLUDED.source_run_id,
+                    loaded_at = NOW()
+                """,
+                (code, file_sha256, psycopg2.Binary(content), run_id),
+            )
+            return 1
+
+
+def replace_ozon_placement_by_supplies_raw_rows(rows: list[dict[str, Any]], *, report_code: str, run_id: str) -> int:
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_DDL_OZON_PLACEMENT_BY_SUPPLIES_REPORT_ROWS)
+            cur.execute("DELETE FROM raw.ozon_placement_by_supplies_report_rows WHERE report_code = %s", (report_code,))
+            values = [
+                (
+                    report_code,
+                    row.get("row_number"),
+                    json.dumps(row.get("payload", {}), ensure_ascii=False, default=str),
+                    run_id,
+                )
+                for row in rows
+            ]
+            if not values:
+                return 0
+            execute_values(
+                cur,
+                """
+                INSERT INTO raw.ozon_placement_by_supplies_report_rows
+                    (report_code, row_number, payload, source_run_id)
+                VALUES %s
+                """,
+                values,
+                template="(%s, %s, %s::jsonb, %s)",
+                page_size=1000,
+            )
+            return len(values)
+
+
+def replace_ozon_placement_by_supplies_cells(rows: list[dict[str, Any]], *, report_code: str, run_id: str) -> int:
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_DDL_OZON_PLACEMENT_BY_SUPPLIES_CELLS)
+            cur.execute("DELETE FROM staging.ozon_placement_by_supplies_cells WHERE report_code = %s", (report_code,))
+            values = []
+            for row in rows:
+                payload = row.get("payload") if isinstance(row.get("payload"), dict) else {}
+                for column_number, (column_name, value) in enumerate(payload.items(), start=1):
+                    numeric_value = _numeric_or_none(value)
+                    values.append(
+                        (
+                            report_code,
+                            row.get("row_number"),
+                            column_number,
+                            str(column_name),
+                            None if value is None else str(value),
+                            numeric_value,
+                            run_id,
+                        )
+                    )
+            if not values:
+                return 0
+            execute_values(
+                cur,
+                """
+                INSERT INTO staging.ozon_placement_by_supplies_cells
                     (report_code, row_number, column_number, column_name,
                      value_text, value_numeric, source_run_id)
                 VALUES %s
