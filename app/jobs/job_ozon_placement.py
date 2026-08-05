@@ -9,10 +9,9 @@ import hashlib
 import os
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-from zoneinfo import ZoneInfo
 
 _THIS = Path(__file__).resolve()
 sys.path.insert(0, str(_THIS.parent.parent))
@@ -36,6 +35,7 @@ from app.normalize.norm_ozon_placement import parse_placement_xlsx
 JOB_NAME = "ozon_placement"
 LOCK_ID = 4_242_203
 PLACEMENT_REPORT_TIME_ZONE = "Europe/Minsk"
+PLACEMENT_REPORT_TZ = timezone(timedelta(hours=3), name=PLACEMENT_REPORT_TIME_ZONE)
 
 
 def _db_functions() -> dict[str, object]:
@@ -65,10 +65,10 @@ def _db_functions() -> dict[str, object]:
 
 
 def default_placement_report_date(now: datetime | None = None) -> date:
-    current = now or datetime.now(ZoneInfo(PLACEMENT_REPORT_TIME_ZONE))
+    current = now or datetime.now(PLACEMENT_REPORT_TZ)
     if current.tzinfo is None:
-        current = current.replace(tzinfo=ZoneInfo(PLACEMENT_REPORT_TIME_ZONE))
-    return current.astimezone(ZoneInfo(PLACEMENT_REPORT_TIME_ZONE)).date()
+        current = current.replace(tzinfo=PLACEMENT_REPORT_TZ)
+    return current.astimezone(PLACEMENT_REPORT_TZ).date()
 
 
 def _load_job_config() -> dict[str, object]:
