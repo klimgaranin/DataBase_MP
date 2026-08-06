@@ -4,6 +4,7 @@ import argparse
 import importlib.util
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Sequence
 from urllib.parse import urlparse
@@ -32,6 +33,13 @@ CORE_MODULES = [
     "dotenv",
     "psycopg2",
 ]
+
+
+def configure_console_output() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(errors="replace")
 
 
 def load_health_env() -> dict[str, str]:
@@ -237,6 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    configure_console_output()
     args = build_parser().parse_args(argv)
     env = load_health_env()
     from app.secrets import SENSITIVE_SECRET_NAMES, secret_status
