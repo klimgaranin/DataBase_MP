@@ -232,6 +232,14 @@ class PlacementAndLocalFileTests(unittest.TestCase):
         self.assertIn("c.column_number = 8", sql)
         self.assertIn("c.column_number = 9", sql)
 
+    def test_placement_v27_uses_ozon_stock_layer_for_first_paid_days(self) -> None:
+        sql = Path("migrations/V27__ozon_placement_first_paid_uses_stock_layer.sql").read_text(encoding="utf-8")
+
+        self.assertIn("current_stock AS", sql)
+        self.assertIn("staging.ozon_stock_by_cluster", sql)
+        self.assertIn("SUM(available_stock_count)", sql)
+        self.assertNotIn("stock_qty) FILTER (WHERE c.column_number = 5)", sql)
+
     @patch("app.ops.ozon_placement_reports.OzonSellerClient")
     @patch("app.ops.ozon_placement_reports.download_report_file")
     @patch("app.ops.ozon_placement_reports.fetch_report_info")
