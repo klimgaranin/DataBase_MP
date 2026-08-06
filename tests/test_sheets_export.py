@@ -17,7 +17,10 @@ from app.ops.sheets_export import (
     default_orders_date_from,
     plan_sheet_table_sync,
     sync_sheet_table,
+    SheetSyncResult,
+    PlacementExportResult,
 )
+from app.jobs.job_sheets_ozon_placement_export import _fallback_warning
 
 
 class FakeSheetsClient:
@@ -101,6 +104,35 @@ class SheetsExportTests(unittest.TestCase):
                 ["21045", 2, 12.345, 37.5, 4],
             ],
         )
+
+    def test_ozon_placement_fallback_warning_mentions_stale_report(self) -> None:
+        result = PlacementExportResult(
+            sheet_name="DATA",
+            start_cell="K1",
+            rows_count=10,
+            sync=SheetSyncResult(
+                mode="replace",
+                prepared_rows=10,
+                existing_rows=0,
+                unchanged_rows=0,
+                changed_rows=10,
+                appended_rows=10,
+                stale_rows=0,
+                header_updated=True,
+                cleared=True,
+                updated_range="DATA!K1:O11",
+                updated_cells=55,
+            ),
+            dry_run=False,
+            report_date=date(2026, 8, 5),
+            expected_report_date=date(2026, 8, 6),
+        )
+
+        warning = _fallback_warning(result)
+
+        self.assertIn("не сегодняшний отчёт", warning)
+        self.assertIn("2026-08-05", warning)
+        self.assertIn("2026-08-06", warning)
 
     def test_quote_sheet_name_escapes_apostrophe(self) -> None:
         self.assertEqual(quote_sheet_name("DATA 2"), "'DATA 2'")

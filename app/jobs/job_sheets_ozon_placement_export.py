@@ -50,14 +50,30 @@ def _load_job_config() -> dict[str, object]:
 
 def _format_result(result: PlacementExportResult) -> str:
     sync = result.sync
+    report_part = ""
+    if result.report_date is not None:
+        expected = f", ожидаемая дата={result.expected_report_date}" if result.expected_report_date is not None else ""
+        report_part = f", отчёт={result.report_date}{expected}"
     if sync is None:
-        return "нет результата"
+        return f"нет результата{report_part}"
     return (
         f"строк={result.rows_count}, лист={result.sheet_name}!{result.start_cell}, "
         f"режим={sync.mode}, без изменений={sync.unchanged_rows}, "
         f"обновлено={sync.changed_rows}, добавлено={sync.appended_rows}, "
         f"устаревших={sync.stale_rows}, строк листа добавлено={sync.added_sheet_rows}, "
-        f"ячеек={sync.updated_cells}"
+        f"ячеек={sync.updated_cells}{report_part}"
+    )
+
+
+def _fallback_warning(result: PlacementExportResult) -> str:
+    if result.report_date is None or result.expected_report_date is None:
+        return ""
+    if result.report_date >= result.expected_report_date:
+        return ""
+    return (
+        "\n\n⚠ Использован не сегодняшний отчёт Ozon placement: "
+        f"{result.report_date}, ожидали {result.expected_report_date}.\n"
+        "Повторная попытка должна сработать через несколько часов."
     )
 
 
@@ -87,6 +103,9 @@ def main() -> int:
             verbose=False,
         )
         log.info("Выгрузка Ozon хранения в Sheets: %s", _format_result(result))
+        warning = _fallback_warning(result)
+        if warning:
+            log.warning("Выгрузка Ozon хранения в Sheets: %s", warning.replace("\n", " "))
         return 0
     except Exception as exc:
         status = "fail"
@@ -117,7 +136,7 @@ def main() -> int:
 
         ts = now_msk_label()
         if status == "ok" and result is not None:
-            msg = f"✅ {ALERT_NAME} | {ts} | OK\n\n➡ {_format_result(result)}"
+            msg = f"✅ {ALERT_NAME} | {ts} | OK\n\n➡ {_format_result(result)}{_fallback_warning(result)}"
         else:
             msg = f"❌ {ALERT_NAME} | {ts} | FAIL\n{escape((error or 'unknown')[:200])}"
         tg_send(msg, logger=log)

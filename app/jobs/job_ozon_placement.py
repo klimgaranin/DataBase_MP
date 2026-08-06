@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -37,6 +38,7 @@ JOB_NAME = "ozon_placement"
 LOCK_ID = 4_242_203
 PLACEMENT_REPORT_TIME_ZONE = "Europe/Minsk"
 PLACEMENT_REPORT_TZ = timezone(timedelta(hours=3), name=PLACEMENT_REPORT_TIME_ZONE)
+DEFAULT_ARCHIVE_DIR = _THIS.parent.parent.parent / "archive" / "reports" / "ozon-placement"
 
 
 def _db_functions() -> dict[str, object]:
@@ -114,6 +116,35 @@ def _http_log(run_id: str, response_log) -> dict:
 
 def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def _safe_filename(value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value.strip())
+    return (cleaned.strip("._") or "report")[:120]
+
+
+def _archive_report_file(
+    *,
+    content: bytes,
+    report_kind: str,
+    report_code: str,
+    report_date: date,
+    file_sha256: str,
+    archive_root: Path | None = None,
+) -> Path:
+    root = archive_root or DEFAULT_ARCHIVE_DIR
+    target_dir = root / report_date.isoformat()
+    target_dir.mkdir(parents=True, exist_ok=True)
+    short_sha = file_sha256[:12]
+    path = target_dir / f"{report_date.isoformat()}_{report_kind}_{_safe_filename(report_code)}_{short_sha}.xlsx"
+    path.write_bytes(content)
+    checksum_path = target_dir / "checksums.sha256"
+    checksum_line = f"{file_sha256}  {path.name}\n"
+    existing = checksum_path.read_text(encoding="utf-8") if checksum_path.exists() else ""
+    if checksum_line not in existing:
+        with checksum_path.open("a", encoding="utf-8", newline="\n") as fh:
+            fh.write(checksum_line)
+    return path
 
 
 def _wait_report_file(
@@ -208,6 +239,13 @@ def main() -> int:
             run_id=started_at,
         )
         db["upsert_ozon_placement_report_file"](code=code, content=file_content, file_sha256=file_sha, run_id=started_at)
+        products_archive_path = _archive_report_file(
+            content=file_content,
+            report_kind="by-products",
+            report_code=code,
+            report_date=cfg["date_to"],
+            file_sha256=file_sha,
+        )
         raw_rows = db["replace_ozon_placement_raw_rows"](rows, report_code=code, run_id=started_at)
         norm_rows = db["replace_ozon_placement_rows"](rows, report_code=code, run_id=started_at)
         placement_cells = db["replace_ozon_placement_cells"](rows, report_code=code, run_id=started_at)
@@ -249,6 +287,13 @@ def main() -> int:
                 file_sha256=supplies_sha,
                 run_id=started_at,
             )
+            supplies_archive_path = _archive_report_file(
+                content=supplies_content,
+                report_kind="by-supplies",
+                report_code=supplies_code,
+                report_date=cfg["date_to"],
+                file_sha256=supplies_sha,
+            )
             supplies_raw_rows = db["replace_ozon_placement_by_supplies_raw_rows"](
                 supplies_rows,
                 report_code=supplies_code,
@@ -263,7 +308,7 @@ def main() -> int:
         db["insert_raw_api_responses"](http_logs)
 
         log.info(
-            "Стоимость размещения Ozon: товары raw=%d, товары staging=%d, товары ячеек=%d, поставки raw=%d, поставки ячеек=%d, SHA-256 товаров=%s, HTTP-логов=%d",
+            "Стоимость размещения Ozon: товары raw=%d, товары staging=%d, товары ячеек=%d, поставки raw=%d, поставки ячеек=%d, SHA-256 товаров=%s, HTTP-логов=%d, архив товаров=%s",
             raw_rows,
             norm_rows,
             placement_cells,
@@ -271,7 +316,10 @@ def main() -> int:
             supplies_cells,
             file_sha,
             len(http_logs),
+            products_archive_path,
         )
+        if cfg["include_supplies"]:
+            log.info("Стоимость размещения Ozon: архив поставок=%s", supplies_archive_path)
         return 0
 
     except Exception as exc:

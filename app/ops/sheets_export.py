@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 import re
@@ -20,6 +20,7 @@ DEFAULT_WB_START_CELL = "F1"
 DEFAULT_OZON_PLACEMENT_START_CELL = "K1"
 OZON_ORDER_EXPORT_TIME_ZONE = "UTC"
 WB_ORDER_EXPORT_TIME_ZONE = "UTC"
+PLACEMENT_REPORT_TZ = timezone(timedelta(hours=3), name="Europe/Minsk")
 
 
 @dataclass(frozen=True)
@@ -74,6 +75,10 @@ class PlacementExportResult:
     rows_count: int
     sync: SheetSyncResult | None
     dry_run: bool
+    report_date: date | None = None
+    expected_report_date: date | None = None
+    product_report_code: str | None = None
+    product_report_rows: int | None = None
 
 
 OzonOrderSheetRow = OrderSheetRow
@@ -591,6 +596,38 @@ def fetch_ozon_placement_sheet_rows(*, limit: int | None = None) -> list[OzonPla
             ]
 
 
+def default_placement_expected_date(now: datetime | None = None) -> date:
+    current = now or datetime.now(PLACEMENT_REPORT_TZ)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=PLACEMENT_REPORT_TZ)
+    return current.astimezone(PLACEMENT_REPORT_TZ).date()
+
+
+def fetch_ozon_placement_report_selection() -> dict[str, Any] | None:
+    sql = """
+        SELECT p.code, p.date_to, COUNT(r.*)::int AS rows_count
+        FROM raw.ozon_placement_reports p
+        JOIN raw.ozon_placement_report_rows r ON r.report_code = p.code
+        WHERE p.status = 'success'
+        GROUP BY p.code, p.date_to, p.updated_at
+        HAVING COUNT(r.*) > 0
+        ORDER BY p.date_to DESC, p.updated_at DESC
+        LIMIT 1
+    """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+            if row is None:
+                return None
+            code, report_date, rows_count = row
+            return {
+                "code": str(code),
+                "report_date": report_date,
+                "rows_count": int(rows_count or 0),
+            }
+
+
 def export_orders_to_sheets(
     *,
     marketplace: Literal["ozon", "wb"],
@@ -752,6 +789,8 @@ def run_ozon_placement_to_sheets(
 ) -> PlacementExportResult:
     config = get_config()
     target_spreadsheet_id = spreadsheet_id or config.analytics_mp_spreadsheet_id
+    selection = fetch_ozon_placement_report_selection()
+    expected_report_date = default_placement_expected_date()
     rows = fetch_ozon_placement_sheet_rows(limit=limit)
     values = build_ozon_placement_sheet_values(rows)
 
@@ -793,7 +832,17 @@ def run_ozon_placement_to_sheets(
                 f"ожидаемо ячеек к изменению {plan.updated_cells}"
             )
             print("Dry-run: запись в Google Sheets не выполнялась")
-        return PlacementExportResult(sheet_name=sheet_name, start_cell=start_cell, rows_count=len(rows), sync=plan, dry_run=True)
+        return PlacementExportResult(
+            sheet_name=sheet_name,
+            start_cell=start_cell,
+            rows_count=len(rows),
+            sync=plan,
+            dry_run=True,
+            report_date=selection["report_date"] if selection else None,
+            expected_report_date=expected_report_date,
+            product_report_code=selection["code"] if selection else None,
+            product_report_rows=selection["rows_count"] if selection else None,
+        )
 
     sync = sync_sheet_table(
         client=client,
@@ -818,7 +867,17 @@ def run_ozon_placement_to_sheets(
             f"строк листа добавлено {sync.added_sheet_rows}, "
             f"ячеек изменено {sync.updated_cells}"
         )
-    return PlacementExportResult(sheet_name=sheet_name, start_cell=start_cell, rows_count=len(rows), sync=sync, dry_run=False)
+    return PlacementExportResult(
+        sheet_name=sheet_name,
+        start_cell=start_cell,
+        rows_count=len(rows),
+        sync=sync,
+        dry_run=False,
+        report_date=selection["report_date"] if selection else None,
+        expected_report_date=expected_report_date,
+        product_report_code=selection["code"] if selection else None,
+        product_report_rows=selection["rows_count"] if selection else None,
+    )
 
 
 def _parse_date(value: str | None) -> date | None:

@@ -18,7 +18,8 @@ from app.clients.http_ozon_seller import (
     fetch_report_info,
     iter_product_list,
 )
-from app.jobs.job_ozon_placement import default_placement_report_date
+from app.jobs.job_ozon_placement import _archive_report_file, default_placement_report_date
+from app.jobs.job_ozon_placement_retry import should_retry_placement
 from app.clients.local_source_files import (
     read_first_sheet_rows,
     read_local_table_rows,
@@ -166,6 +167,32 @@ class PlacementAndLocalFileTests(unittest.TestCase):
         value = default_placement_report_date(datetime(2026, 8, 6, 4, 0, tzinfo=timezone.utc))
 
         self.assertEqual(value, date(2026, 8, 6))
+
+    def test_placement_archive_writes_file_and_checksum(self) -> None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            path = _archive_report_file(
+                content=b"report-content",
+                report_kind="by-products",
+                report_code="REPORT/test code",
+                report_date=date(2026, 8, 6),
+                file_sha256="a" * 64,
+                archive_root=Path(tmp),
+            )
+
+            self.assertTrue(path.exists())
+            self.assertEqual(path.read_bytes(), b"report-content")
+            self.assertIn("aaaaaaaaaaaa", path.name)
+            checksum = (Path(tmp) / "2026-08-06" / "checksums.sha256").read_text(encoding="utf-8")
+            self.assertIn(("a" * 64), checksum)
+            self.assertIn(path.name, checksum)
+
+    def test_placement_retry_needed_only_for_stale_or_missing_report(self) -> None:
+        expected = date(2026, 8, 6)
+
+        self.assertTrue(should_retry_placement(report_date=None, expected_date=expected))
+        self.assertTrue(should_retry_placement(report_date=date(2026, 8, 5), expected_date=expected))
+        self.assertFalse(should_retry_placement(report_date=date(2026, 8, 6), expected_date=expected))
+        self.assertFalse(should_retry_placement(report_date=date(2026, 8, 7), expected_date=expected))
 
     def test_parse_placement_xlsx(self) -> None:
         workbook = Workbook()
