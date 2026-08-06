@@ -250,6 +250,20 @@ class PlacementAndLocalFileTests(unittest.TestCase):
         self.assertNotIn("staging.ozon_stock_by_cluster", sql)
         self.assertNotIn("SUM(available_stock_count)", sql)
 
+    def test_placement_v29_uses_product_quantity_and_supplies_cumulative_free_qty(self) -> None:
+        sql = Path("migrations/V29__ozon_placement_first_paid_by_product_quantity.sql").read_text(encoding="utf-8")
+
+        self.assertIn("staging.ozon_placement_cells", sql)
+        self.assertIn("staging.ozon_placement_by_supplies_cells", sql)
+        self.assertIn("product_totals AS", sql)
+        self.assertIn("c.column_number = 2", sql)
+        self.assertIn("c.column_number = 3", sql)
+        self.assertIn("c.column_number = 9", sql)
+        self.assertIn("SUM(COALESCE(product_qty, 0))", sql)
+        self.assertIn("expired_free_qty", sql)
+        self.assertIn("s.free_qty_on_report_date - o.expired_free_qty < s.product_qty", sql)
+        self.assertNotIn("staging.ozon_stock_by_cluster", sql)
+
     @patch("app.ops.ozon_placement_reports.OzonSellerClient")
     @patch("app.ops.ozon_placement_reports.download_report_file")
     @patch("app.ops.ozon_placement_reports.fetch_report_info")
