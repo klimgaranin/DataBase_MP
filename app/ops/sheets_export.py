@@ -237,6 +237,7 @@ def sync_sheet_table(
     mode: Literal["upsert", "replace"],
     headers: Sequence[str] | None = None,
     key_columns: int = 2,
+    replace_on_order_change: bool = False,
 ) -> SheetSyncResult:
     table_headers = list(headers or ORDER_EXPORT_HEADERS)
     width = len(table_headers)
@@ -315,6 +316,31 @@ def sync_sheet_table(
             added_sheet_rows=added_sheet_rows,
         )
 
+    target_key_order = [_row_key(value_row, key_columns=key_columns) for value_row in values[1:] if all(_row_key(value_row, key_columns=key_columns))]
+    existing_key_order = [_row_key(row, key_columns=key_columns) for row in existing[header_row:] if all(_row_key(row, key_columns=key_columns))]
+    if replace_on_order_change and existing_key_order != target_key_order:
+        client.clear_values(spreadsheet_id=spreadsheet_id, sheet_name=sheet_name, a1_range=full_column_range)
+        result = client.update_values(
+            spreadsheet_id=spreadsheet_id,
+            sheet_name=sheet_name,
+            start_cell=start_cell,
+            values=values,
+        )
+        return SheetSyncResult(
+            mode="replace-order",
+            prepared_rows=max(0, len(values) - 1),
+            existing_rows=max(0, len(existing) - header_row),
+            unchanged_rows=0,
+            changed_rows=max(0, len(values) - 1),
+            appended_rows=max(0, len(values) - 1),
+            stale_rows=0,
+            header_updated=True,
+            cleared=True,
+            updated_range=result.get("updatedRange"),
+            updated_cells=int(result.get("updatedCells") or 0),
+            added_sheet_rows=added_sheet_rows,
+        )
+
     changed_rows = 0
     unchanged_rows = 0
     appended_rows: list[list[Any]] = []
@@ -369,6 +395,7 @@ def plan_sheet_table_sync(
     mode: Literal["upsert", "replace"],
     headers: Sequence[str] | None = None,
     key_columns: int = 2,
+    replace_on_order_change: bool = False,
 ) -> SheetSyncResult:
     table_headers = list(headers or ORDER_EXPORT_HEADERS)
     width = len(table_headers)
@@ -406,6 +433,23 @@ def plan_sheet_table_sync(
             changed_rows=max(0, len(values) - 1),
             appended_rows=max(0, len(values) - 1),
             stale_rows=len(stale_keys),
+            header_updated=True,
+            cleared=True,
+            updated_range=None,
+            updated_cells=len(values) * width,
+        )
+
+    target_key_order = [_row_key(value_row, key_columns=key_columns) for value_row in values[1:] if all(_row_key(value_row, key_columns=key_columns))]
+    existing_key_order = [_row_key(row, key_columns=key_columns) for row in existing[header_row:] if all(_row_key(row, key_columns=key_columns))]
+    if replace_on_order_change and existing_key_order != target_key_order:
+        return SheetSyncResult(
+            mode="replace-order",
+            prepared_rows=max(0, len(values) - 1),
+            existing_rows=max(0, len(existing) - header_row),
+            unchanged_rows=0,
+            changed_rows=max(0, len(values) - 1),
+            appended_rows=max(0, len(values) - 1),
+            stale_rows=0,
             header_updated=True,
             cleared=True,
             updated_range=None,
@@ -464,7 +508,7 @@ def fetch_ozon_order_sheet_rows(
         WHERE (COALESCE(created_at, in_process_at) AT TIME ZONE '{OZON_ORDER_EXPORT_TIME_ZONE}')::date BETWEEN %s AND %s
           AND COALESCE(status, '') <> 'cancelled'
         GROUP BY 1, 2
-        ORDER BY 1 DESC, 2 ASC
+        ORDER BY 1 DESC, MAX(COALESCE(created_at, in_process_at)) DESC, 2 ASC
         {limit_sql}
     """
     return _fetch_order_rows(sql, params)
@@ -493,7 +537,7 @@ def fetch_wb_order_sheet_rows(
         WHERE (date_ts AT TIME ZONE '{WB_ORDER_EXPORT_TIME_ZONE}')::date BETWEEN %s AND %s
           AND COALESCE(is_cancel, FALSE) = FALSE
         GROUP BY 1, 2
-        ORDER BY 1 DESC, 2 ASC
+        ORDER BY 1 DESC, MAX(date_ts) DESC, 2 ASC
         {limit_sql}
     """
     return _fetch_order_rows(sql, params)
@@ -619,7 +663,13 @@ def run_orders_to_sheets(
             sheet_name=sheet_name,
             a1_range=f"{start_column}:{end_column}",
         )
-        plan = plan_sheet_table_sync(existing=existing, start_cell=target_start_cell, values=values, mode=mode)
+        plan = plan_sheet_table_sync(
+            existing=existing,
+            start_cell=target_start_cell,
+            values=values,
+            mode=mode,
+            replace_on_order_change=True,
+        )
         if verbose:
             print(
                 "Dry-run план Google Sheets: "
@@ -650,6 +700,7 @@ def run_orders_to_sheets(
         start_cell=target_start_cell,
         values=values,
         mode=mode,
+        replace_on_order_change=True,
     )
     if verbose:
         if result.cleared:

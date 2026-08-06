@@ -232,6 +232,34 @@ class SheetsExportTests(unittest.TestCase):
         self.assertEqual(client.cleared, ["H:K"])
         self.assertEqual(client.updated[0][0], "H1")
 
+    def test_sync_sheet_table_replaces_when_row_order_changed(self) -> None:
+        client = FakeSheetsClient(
+            [
+                ["Дата", "Артикул", "Кол-во", "Сумма"],
+                ["05.08.2026", "OLD", "1", "100"],
+                ["06.08.2026", "NEW", "1", "200"],
+            ]
+        )
+        values = [
+            ["Дата", "Артикул", "Кол-во", "Сумма"],
+            ["06.08.2026", "NEW", 1, 200],
+            ["05.08.2026", "OLD", 1, 100],
+        ]
+
+        result = sync_sheet_table(
+            client=client,
+            spreadsheet_id="spreadsheet",
+            sheet_name="DATA",
+            start_cell="A1",
+            values=values,
+            mode="upsert",
+            replace_on_order_change=True,
+        )
+
+        self.assertEqual(result.mode, "replace-order")
+        self.assertEqual(client.cleared, ["A:D"])
+        self.assertEqual(client.updated[0][1], values)
+
     def test_plan_sheet_table_sync_does_not_write(self) -> None:
         existing = [
             ["Дата", "Артикул", "Кол-во", "Сумма"],
@@ -249,6 +277,30 @@ class SheetsExportTests(unittest.TestCase):
         self.assertEqual(plan.unchanged_rows, 1)
         self.assertEqual(plan.appended_rows, 1)
         self.assertEqual(plan.updated_cells, 4)
+
+    def test_plan_sheet_table_sync_detects_row_order_change(self) -> None:
+        existing = [
+            ["Дата", "Артикул", "Кол-во", "Сумма"],
+            ["05.08.2026", "OLD", "1", "100"],
+            ["06.08.2026", "NEW", "1", "200"],
+        ]
+        values = [
+            ["Дата", "Артикул", "Кол-во", "Сумма"],
+            ["06.08.2026", "NEW", 1, 200],
+            ["05.08.2026", "OLD", 1, 100],
+        ]
+
+        plan = plan_sheet_table_sync(
+            existing=existing,
+            start_cell="A1",
+            values=values,
+            mode="upsert",
+            replace_on_order_change=True,
+        )
+
+        self.assertEqual(plan.mode, "replace-order")
+        self.assertTrue(plan.cleared)
+        self.assertEqual(plan.updated_cells, 12)
 
     def test_plan_sheet_table_sync_treats_decimal_comma_as_same_number(self) -> None:
         existing = [
