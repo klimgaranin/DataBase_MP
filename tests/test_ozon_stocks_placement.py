@@ -240,6 +240,16 @@ class PlacementAndLocalFileTests(unittest.TestCase):
         self.assertIn("SUM(available_stock_count)", sql)
         self.assertNotIn("stock_qty) FILTER (WHERE c.column_number = 5)", sql)
 
+    def test_placement_v28_uses_supplies_summary_for_first_paid_days(self) -> None:
+        sql = Path("migrations/V28__ozon_placement_first_paid_from_supplies_summary.sql").read_text(encoding="utf-8")
+
+        self.assertIn("raw.ozon_placement_by_supplies_reports", sql)
+        self.assertIn("staging.ozon_placement_by_supplies_cells", sql)
+        self.assertIn("c.column_number = 8", sql)
+        self.assertIn("NULL::int AS stock_qty", sql)
+        self.assertNotIn("staging.ozon_stock_by_cluster", sql)
+        self.assertNotIn("SUM(available_stock_count)", sql)
+
     @patch("app.ops.ozon_placement_reports.OzonSellerClient")
     @patch("app.ops.ozon_placement_reports.download_report_file")
     @patch("app.ops.ozon_placement_reports.fetch_report_info")
