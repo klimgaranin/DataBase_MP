@@ -223,6 +223,15 @@ class PlacementAndLocalFileTests(unittest.TestCase):
         self.assertIn("p.date_from = s.date_from", sql)
         self.assertIn("p.date_to = s.date_to", sql)
 
+    def test_placement_v26_reads_supplies_report_by_column_position(self) -> None:
+        sql = Path("migrations/V26__ozon_placement_supplies_first_paid_by_column_position.sql").read_text(encoding="utf-8")
+
+        self.assertIn("c.column_number = 1", sql)
+        self.assertIn("c.column_number = 5", sql)
+        self.assertIn("c.column_number = 6", sql)
+        self.assertIn("c.column_number = 8", sql)
+        self.assertIn("c.column_number = 9", sql)
+
     @patch("app.ops.ozon_placement_reports.OzonSellerClient")
     @patch("app.ops.ozon_placement_reports.download_report_file")
     @patch("app.ops.ozon_placement_reports.fetch_report_info")
