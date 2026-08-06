@@ -215,6 +215,14 @@ class PlacementAndLocalFileTests(unittest.TestCase):
         self.assertEqual(rows[0]["placement_cost"], 63.5)
         self.assertEqual(rows[0]["payload"]["Кол-во платных экземпляров"], 2)
 
+    def test_placement_v25_uses_latest_nonempty_product_report_date(self) -> None:
+        sql = Path("migrations/V25__ozon_placement_use_latest_nonempty_product_report.sql").read_text(encoding="utf-8")
+
+        self.assertIn("EXISTS (\n          SELECT 1", sql)
+        self.assertIn("raw.ozon_placement_report_rows", sql)
+        self.assertIn("p.date_from = s.date_from", sql)
+        self.assertIn("p.date_to = s.date_to", sql)
+
     @patch("app.ops.ozon_placement_reports.OzonSellerClient")
     @patch("app.ops.ozon_placement_reports.download_report_file")
     @patch("app.ops.ozon_placement_reports.fetch_report_info")
