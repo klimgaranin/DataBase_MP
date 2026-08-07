@@ -1263,7 +1263,9 @@ def insert_raw_api_responses(rows: list[dict[str, Any]]) -> int:
             return len(values)
 
 
-def upsert_wb_order_feed_orders(rows: list[dict[str, Any]], *, run_id: str) -> int:
+def upsert_wb_order_feed_orders(
+    rows: list[dict[str, Any]], *, run_id: str, force_history: bool = False
+) -> int:
     """Обновляет текущий raw WB Order Feed и добавляет версию только при изменении payload."""
     if not rows:
         return 0
@@ -1290,21 +1292,27 @@ def upsert_wb_order_feed_orders(rows: list[dict[str, Any]], *, run_id: str) -> i
     if not values:
         return 0
 
-    with connect() as conn:
-        with conn.cursor() as cur:
-            execute_values(
-                cur,
-                """
-                WITH incoming (
-                    srid, nm_id, chrt_id, created_at, status_updated_at, status,
-                    cancel_type, payload_sha256, payload, source_run_id
-                ) AS (VALUES %s),
-                changed AS (
+    changed_where = "SELECT i.* FROM incoming i" if force_history else """
                     SELECT i.*
                     FROM incoming i
                     LEFT JOIN raw.wb_order_feed_orders current_state ON current_state.srid = i.srid
                     WHERE current_state.srid IS NULL
                        OR current_state.payload IS DISTINCT FROM i.payload
+    """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            total = 0
+            for start in range(0, len(values), 1000):
+                chunk = values[start:start + 1000]
+                execute_values(
+                    cur,
+                    f"""
+                WITH incoming (
+                    srid, nm_id, chrt_id, created_at, status_updated_at, status,
+                    cancel_type, payload_sha256, payload, source_run_id
+                ) AS (VALUES %s),
+                changed AS (
+                    {changed_where}
                 ),
                 history_insert AS (
                     INSERT INTO raw.wb_order_feed_order_versions
@@ -1337,13 +1345,14 @@ def upsert_wb_order_feed_orders(rows: list[dict[str, Any]], *, run_id: str) -> i
                     RETURNING 1
                 )
                 SELECT COUNT(*) FROM history_insert
-                """,
-                values,
-                template="(%s, %s, %s, %s::timestamptz, %s::timestamptz, %s, %s, %s, %s::jsonb, %s)",
-                page_size=1000,
-            )
-            row = cur.fetchone()
-            return int(row[0]) if row else 0
+                    """,
+                    chunk,
+                    template="(%s, %s, %s, %s::timestamptz, %s::timestamptz, %s, %s, %s, %s::jsonb, %s)",
+                    page_size=len(chunk),
+                )
+                row = cur.fetchone()
+                total += int(row[0]) if row else 0
+            return total
 
 
 def upsert_wb_order_feed_orders_full(rows: list[dict[str, Any]], *, run_id: str) -> int:
@@ -1381,9 +1390,12 @@ def upsert_wb_order_feed_orders_full(rows: list[dict[str, Any]], *, run_id: str)
 
     with connect() as conn:
         with conn.cursor() as cur:
-            execute_values(
-                cur,
-                """
+            total = 0
+            for start in range(0, len(values), 1000):
+                chunk = values[start:start + 1000]
+                execute_values(
+                    cur,
+                    """
                 INSERT INTO staging.wb_order_feed_orders_full
                     (srid, nm_id, chrt_id, created_at, status_updated_at, status, cancel_type,
                      warehouse_name, warehouse_region, is_mp, destination_city, destination_district,
@@ -1409,11 +1421,44 @@ def upsert_wb_order_feed_orders_full(rows: list[dict[str, Any]], *, run_id: str)
                     updated_at = NOW()
                 WHERE staging.wb_order_feed_orders_full.payload IS DISTINCT FROM EXCLUDED.payload
                    OR staging.wb_order_feed_orders_full.currency IS DISTINCT FROM EXCLUDED.currency
+                    """,
+                    chunk,
+                    template="(%s, %s, %s, %s::timestamptz, %s::timestamptz, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)",
+                    page_size=len(chunk),
+                )
+                total += cur.rowcount if cur.rowcount >= 0 else 0
+            return total
+
+
+def get_wb_order_feed_raw_run_rows(run_id: str) -> list[dict[str, Any]]:
+    """Читает сохранённые raw HTTP-страницы WB для пересборки без нового API-вызова."""
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT item.value, response.response_payload #>> '{data,currency}'
+                FROM raw.api_responses response
+                CROSS JOIN LATERAL jsonb_array_elements(
+                    COALESCE(response.response_payload #> '{data,orders}', '[]'::jsonb)
+                ) AS item(value)
+                WHERE response.run_id = %s
+                  AND response.method_name = 'wb_order_feed'
+                ORDER BY response.id
                 """,
-                values,
-                template="(%s, %s, %s, %s::timestamptz, %s::timestamptz, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)",
-                page_size=1000,
+                (run_id,),
             )
+            return [
+                {"payload": payload, "currency": currency}
+                for payload, currency in cur.fetchall()
+                if isinstance(payload, dict)
+            ]
+
+
+def delete_wb_order_feed_versions_for_run(run_id: str) -> int:
+    """Удаляет версии одного run_id перед точной пересборкой из его raw HTTP-слоя."""
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM raw.wb_order_feed_order_versions WHERE source_run_id = %s", (run_id,))
             return cur.rowcount if cur.rowcount >= 0 else 0
 
 

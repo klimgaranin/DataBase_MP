@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import time as time_module
+import argparse
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -64,10 +65,32 @@ def _load_job_config() -> dict[str, Any]:
     }
 
 
+def _dedupe_by_srid(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """Убирает повторы srid внутри одного snapshot, оставляя наиболее поздний updatedAt."""
+    unique: dict[str, dict[str, Any]] = {}
+    duplicates = 0
+    for row in rows:
+        srid = str(row.get("srid") or "").strip()
+        if not srid:
+            continue
+        previous = unique.get(srid)
+        if previous is None:
+            unique[srid] = row
+            continue
+        duplicates += 1
+        previous_at = previous.get("status_updated_at") or datetime.min.replace(tzinfo=timezone.utc)
+        current_at = row.get("status_updated_at") or datetime.min.replace(tzinfo=timezone.utc)
+        if current_at > previous_at:
+            unique[srid] = row
+    return list(unique.values()), duplicates
+
+
 def _db_functions() -> dict[str, Any]:
     from app.db import (
         advisory_unlock,
+        delete_wb_order_feed_versions_for_run,
         get_job_cursor,
+        get_wb_order_feed_raw_run_rows,
         insert_job_run,
         insert_raw_api_responses,
         set_job_cursor,
@@ -78,7 +101,9 @@ def _db_functions() -> dict[str, Any]:
 
     return {
         "advisory_unlock": advisory_unlock,
+        "delete_wb_order_feed_versions_for_run": delete_wb_order_feed_versions_for_run,
         "get_job_cursor": get_job_cursor,
+        "get_wb_order_feed_raw_run_rows": get_wb_order_feed_raw_run_rows,
         "insert_job_run": insert_job_run,
         "insert_raw_api_responses": insert_raw_api_responses,
         "set_job_cursor": set_job_cursor,
@@ -88,7 +113,10 @@ def _db_functions() -> dict[str, Any]:
     }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="WB Order Feed sync")
+    parser.add_argument("--rebuild-from-raw-run", default="", help="пересобрать состояние из raw HTTP run_id без API-вызова")
+    args = parser.parse_args(argv)
     cfg = _load_job_config()
     log = setup_logging(JOB_NAME, log_file=cfg["log_file"])
     now = datetime.now(timezone.utc).replace(microsecond=0)
@@ -120,55 +148,75 @@ def main() -> int:
 
     try:
         cursor_old = db["get_job_cursor"](JOB_NAME) or ""
-        client = WbOrderFeedClient()
-        log.info(
-            "Лента заказов WB: старт, период=%s..%s, timezone=%s, старый курсор=%s",
-            since.isoformat(), until.isoformat(), cfg["timezone_name"], cursor_old or "-",
-        )
-        for orders, currency, response_log in iter_order_feed(
-            client,
-            start=since,
-            end=until,
-            timezone_name=cfg["timezone_name"],
-            limit=cfg["page_limit"],
-            max_pages=cfg["max_pages"],
-        ):
-            pages += 1
-            api_rows += len(orders)
-            normalized = [
+        normalized_rows: list[dict[str, Any]] = []
+        run_id_for_rows = started_at
+        force_history = False
+
+        if args.rebuild_from_raw_run:
+            run_id_for_rows = args.rebuild_from_raw_run
+            cursor_used = run_id_for_rows
+            cached_rows = db["get_wb_order_feed_raw_run_rows"](run_id_for_rows)
+            api_rows = len(cached_rows)
+            normalized_rows = [
                 item
-                for row in orders
-                for item in [normalize_wb_order_feed_order(row, currency=currency)]
+                for cached in cached_rows
+                for item in [normalize_wb_order_feed_order(cached["payload"], currency=cached["currency"])]
                 if item is not None
             ]
-            # Каждая страница фиксируется сразу: при обрыве следующая джоба безопасно повторит окно 31 день.
-            db["insert_raw_api_responses"]([
-                {
-                    "run_id": started_at,
-                    "marketplace": "wb",
-                    "method_name": response_log.method_name,
-                    "http_method": response_log.http_method,
-                    "url": response_log.url,
-                    "request_payload": response_log.request_payload,
-                    "response_status": response_log.response_status,
-                    "response_payload": response_log.response_payload,
-                    "response_sha256": response_sha256(response_log.response_payload),
-                    "duration_ms": response_log.duration_ms,
-                    "attempt": response_log.attempt,
-                    "error": response_log.error,
-                }
-            ])
-            raw_changed = db["upsert_wb_order_feed_orders"](normalized, run_id=started_at)
-            full_changed = db["upsert_wb_order_feed_orders_full"](normalized, run_id=started_at)
-            raw_versions += raw_changed
-            staging_changed += full_changed
+            deleted = db["delete_wb_order_feed_versions_for_run"](run_id_for_rows)
+            force_history = True
+            log.info("Лента заказов WB: восстановление из raw run_id=%s, строк=%d, старых версий удалено=%d", run_id_for_rows, api_rows, deleted)
+        else:
+            client = WbOrderFeedClient()
             log.info(
-                "Лента заказов WB: страница=%d, API=%d, новых/изменённых версий=%d, технических строк=%d, всего API=%d",
-                pages, len(orders), raw_changed, full_changed, api_rows,
+                "Лента заказов WB: старт, период=%s..%s, timezone=%s, старый курсор=%s",
+                since.isoformat(), until.isoformat(), cfg["timezone_name"], cursor_old or "-",
             )
+            for orders, currency, response_log in iter_order_feed(
+                client,
+                start=since,
+                end=until,
+                timezone_name=cfg["timezone_name"],
+                limit=cfg["page_limit"],
+                max_pages=cfg["max_pages"],
+            ):
+                pages += 1
+                api_rows += len(orders)
+                normalized_rows.extend(
+                    item
+                    for row in orders
+                    for item in [normalize_wb_order_feed_order(row, currency=currency)]
+                    if item is not None
+                )
+                # Raw HTTP-страница фиксируется сразу: источник для восстановления не потеряется при обрыве.
+                db["insert_raw_api_responses"]([
+                    {
+                        "run_id": started_at,
+                        "marketplace": "wb",
+                        "method_name": response_log.method_name,
+                        "http_method": response_log.http_method,
+                        "url": response_log.url,
+                        "request_payload": response_log.request_payload,
+                        "response_status": response_log.response_status,
+                        "response_payload": response_log.response_payload,
+                        "response_sha256": response_sha256(response_log.response_payload),
+                        "duration_ms": response_log.duration_ms,
+                        "attempt": response_log.attempt,
+                        "error": response_log.error,
+                    }
+                ])
+                log.info("Лента заказов WB: страница=%d, API=%d, всего API=%d; raw HTTP сохранён", pages, len(orders), api_rows)
+
+        normalized, duplicate_rows = _dedupe_by_srid(normalized_rows)
+        raw_versions = db["upsert_wb_order_feed_orders"](normalized, run_id=run_id_for_rows, force_history=force_history)
+        staging_changed = db["upsert_wb_order_feed_orders_full"](normalized, run_id=run_id_for_rows)
+        log.info(
+            "Лента заказов WB: уникальных srid=%d, повторов в snapshot=%d, новых/изменённых версий=%d, технических строк=%d",
+            len(normalized), duplicate_rows, raw_versions, staging_changed,
+        )
 
         cursor_new = until.isoformat()
-        if not cfg["since_override"] and not cfg["until_override"]:
+        if not args.rebuild_from_raw_run and not cfg["since_override"] and not cfg["until_override"]:
             db["set_job_cursor"](JOB_NAME, cursor_new)
         log.info("Лента заказов WB: завершена, страниц=%d, строк=%d, версий=%d", pages, api_rows, raw_versions)
         return 0

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 from app.clients.http_wb_order_feed import WbOrderFeedClient, iter_order_feed
-from app.jobs.job_wb_order_feed import _period
+from app.jobs.job_wb_order_feed import _dedupe_by_srid, _period
 from app.normalize.norm_wb_order_feed import normalize_wb_order_feed_order
 
 
@@ -104,6 +104,16 @@ class WbOrderFeedPeriodTests(unittest.TestCase):
         until = datetime(2026, 8, 7, tzinfo=timezone.utc)
         with self.assertRaises(ValueError):
             _period(until, days=31, since_override=until - timedelta(days=32), until_override=until)
+
+
+class WbOrderFeedDedupeTests(unittest.TestCase):
+    def test_keeps_latest_status_for_duplicate_srid(self) -> None:
+        older = {"srid": "one", "status": "created", "status_updated_at": datetime(2026, 8, 1, tzinfo=timezone.utc)}
+        newer = {"srid": "one", "status": "buyout", "status_updated_at": datetime(2026, 8, 2, tzinfo=timezone.utc)}
+        unique, duplicates = _dedupe_by_srid([older, newer, {"srid": "two", "status_updated_at": None}])
+        self.assertEqual(duplicates, 1)
+        self.assertEqual(len(unique), 2)
+        self.assertEqual(next(item for item in unique if item["srid"] == "one")["status"], "buyout")
 
 
 if __name__ == "__main__":
