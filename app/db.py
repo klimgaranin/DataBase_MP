@@ -1436,22 +1436,25 @@ def get_wb_order_feed_raw_run_rows(run_id: str) -> list[dict[str, Any]]:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT item.value, response.response_payload #>> '{data,currency}'
+                SELECT response.response_payload #> '{data,orders}',
+                       response.response_payload #>> '{data,currency}'
                 FROM raw.api_responses response
-                CROSS JOIN LATERAL jsonb_array_elements(
-                    COALESCE(response.response_payload #> '{data,orders}', '[]'::jsonb)
-                ) AS item(value)
                 WHERE response.run_id = %s
                   AND response.method_name = 'wb_order_feed'
                 ORDER BY response.id
                 """,
                 (run_id,),
             )
-            return [
-                {"payload": payload, "currency": currency}
-                for payload, currency in cur.fetchall()
-                if isinstance(payload, dict)
-            ]
+            rows: list[dict[str, Any]] = []
+            for orders, currency in cur.fetchall():
+                if not isinstance(orders, list):
+                    continue
+                rows.extend(
+                    {"payload": payload, "currency": currency}
+                    for payload in orders
+                    if isinstance(payload, dict)
+                )
+            return rows
 
 
 def delete_wb_order_feed_versions_for_run(run_id: str) -> int:
