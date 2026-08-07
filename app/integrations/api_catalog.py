@@ -28,6 +28,17 @@ class ApiMethodSpec:
 API_METHODS: tuple[ApiMethodSpec, ...] = (
     ApiMethodSpec(
         marketplace="wb",
+        name="wb_analytics_order_feed",
+        method="POST",
+        base_url="https://seller-analytics-api.wildberries.ru",
+        path="/api/analytics/v1/order-feed",
+        operation_id="postV1OrderFeed",
+        auth_secret_names=("WB_ANALYTICS_TOKEN", "WB_TOKEN"),
+        spec_path=ROOT / "local" / "api_specs" / "wb-analytics-20260807.yaml",
+        notes="Лента заказов WB: rolling-окно максимум 31 день, status history, offset + snapshotTime.",
+    ),
+    ApiMethodSpec(
+        marketplace="wb",
         name="wb_analytics_stocks_by_warehouse",
         method="POST",
         base_url="https://seller-analytics-api.wildberries.ru",

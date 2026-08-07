@@ -1263,6 +1263,160 @@ def insert_raw_api_responses(rows: list[dict[str, Any]]) -> int:
             return len(values)
 
 
+def upsert_wb_order_feed_orders(rows: list[dict[str, Any]], *, run_id: str) -> int:
+    """Обновляет текущий raw WB Order Feed и добавляет версию только при изменении payload."""
+    if not rows:
+        return 0
+    values = []
+    for row in rows:
+        srid = str(row.get("srid") or "").strip()
+        if not srid:
+            continue
+        payload_json = json.dumps(row.get("payload", {}), ensure_ascii=False, sort_keys=True, default=str)
+        values.append(
+            (
+                srid,
+                row.get("nm_id"),
+                row.get("chrt_id"),
+                row.get("created_at"),
+                row.get("status_updated_at"),
+                row.get("status"),
+                row.get("cancel_type"),
+                hashlib.sha256(payload_json.encode("utf-8")).hexdigest(),
+                payload_json,
+                run_id,
+            )
+        )
+    if not values:
+        return 0
+
+    with connect() as conn:
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
+                """
+                WITH incoming (
+                    srid, nm_id, chrt_id, created_at, status_updated_at, status,
+                    cancel_type, payload_sha256, payload, source_run_id
+                ) AS (VALUES %s),
+                changed AS (
+                    SELECT i.*
+                    FROM incoming i
+                    LEFT JOIN raw.wb_order_feed_orders current_state ON current_state.srid = i.srid
+                    WHERE current_state.srid IS NULL
+                       OR current_state.payload IS DISTINCT FROM i.payload
+                ),
+                history_insert AS (
+                    INSERT INTO raw.wb_order_feed_order_versions
+                        (srid, payload_sha256, nm_id, chrt_id, created_at, status_updated_at,
+                         status, cancel_type, payload, source_run_id)
+                    SELECT srid, payload_sha256, nm_id, chrt_id, created_at, status_updated_at,
+                           status, cancel_type, payload, source_run_id
+                    FROM changed
+                    RETURNING 1
+                ),
+                current_upsert AS (
+                    INSERT INTO raw.wb_order_feed_orders
+                        (srid, nm_id, chrt_id, created_at, status_updated_at, status,
+                         cancel_type, payload_sha256, payload, source_run_id)
+                    SELECT srid, nm_id, chrt_id, created_at, status_updated_at, status,
+                           cancel_type, payload_sha256, payload, source_run_id
+                    FROM incoming
+                    ON CONFLICT (srid) DO UPDATE SET
+                        nm_id = EXCLUDED.nm_id,
+                        chrt_id = EXCLUDED.chrt_id,
+                        created_at = EXCLUDED.created_at,
+                        status_updated_at = EXCLUDED.status_updated_at,
+                        status = EXCLUDED.status,
+                        cancel_type = EXCLUDED.cancel_type,
+                        payload_sha256 = EXCLUDED.payload_sha256,
+                        payload = EXCLUDED.payload,
+                        source_run_id = EXCLUDED.source_run_id,
+                        updated_at = NOW()
+                    WHERE raw.wb_order_feed_orders.payload IS DISTINCT FROM EXCLUDED.payload
+                    RETURNING 1
+                )
+                SELECT COUNT(*) FROM history_insert
+                """,
+                values,
+                template="(%s, %s, %s, %s::timestamptz, %s::timestamptz, %s, %s, %s, %s::jsonb, %s)",
+                page_size=1000,
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
+
+
+def upsert_wb_order_feed_orders_full(rows: list[dict[str, Any]], *, run_id: str) -> int:
+    """Записывает полную техническую таблицу WB Order Feed без обновления одинаковых строк."""
+    if not rows:
+        return 0
+    values = []
+    for row in rows:
+        srid = str(row.get("srid") or "").strip()
+        if not srid:
+            continue
+        values.append(
+            (
+                srid,
+                row.get("nm_id"),
+                row.get("chrt_id"),
+                row.get("created_at"),
+                row.get("status_updated_at"),
+                row.get("status"),
+                row.get("cancel_type"),
+                row.get("warehouse_name"),
+                row.get("warehouse_region"),
+                row.get("is_mp"),
+                row.get("destination_city"),
+                row.get("destination_district"),
+                row.get("seller_price"),
+                row.get("currency"),
+                row.get("is_b2b"),
+                json.dumps(row.get("payload", {}), ensure_ascii=False, default=str),
+                run_id,
+            )
+        )
+    if not values:
+        return 0
+
+    with connect() as conn:
+        with conn.cursor() as cur:
+            execute_values(
+                cur,
+                """
+                INSERT INTO staging.wb_order_feed_orders_full
+                    (srid, nm_id, chrt_id, created_at, status_updated_at, status, cancel_type,
+                     warehouse_name, warehouse_region, is_mp, destination_city, destination_district,
+                     seller_price, currency, is_b2b, payload, source_run_id)
+                VALUES %s
+                ON CONFLICT (srid) DO UPDATE SET
+                    nm_id = EXCLUDED.nm_id,
+                    chrt_id = EXCLUDED.chrt_id,
+                    created_at = EXCLUDED.created_at,
+                    status_updated_at = EXCLUDED.status_updated_at,
+                    status = EXCLUDED.status,
+                    cancel_type = EXCLUDED.cancel_type,
+                    warehouse_name = EXCLUDED.warehouse_name,
+                    warehouse_region = EXCLUDED.warehouse_region,
+                    is_mp = EXCLUDED.is_mp,
+                    destination_city = EXCLUDED.destination_city,
+                    destination_district = EXCLUDED.destination_district,
+                    seller_price = EXCLUDED.seller_price,
+                    currency = EXCLUDED.currency,
+                    is_b2b = EXCLUDED.is_b2b,
+                    payload = EXCLUDED.payload,
+                    source_run_id = EXCLUDED.source_run_id,
+                    updated_at = NOW()
+                WHERE staging.wb_order_feed_orders_full.payload IS DISTINCT FROM EXCLUDED.payload
+                   OR staging.wb_order_feed_orders_full.currency IS DISTINCT FROM EXCLUDED.currency
+                """,
+                values,
+                template="(%s, %s, %s, %s::timestamptz, %s::timestamptz, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)",
+                page_size=1000,
+            )
+            return cur.rowcount if cur.rowcount >= 0 else 0
+
+
 def upsert_ozon_fbo_postings(rows: list[dict[str, Any]], *, run_id: str) -> int:
     if not rows:
         return 0

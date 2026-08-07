@@ -31,9 +31,11 @@ DataBase_MP/
 │   ├── clients/
 │   │   ├── http_wb_statistics.py   # HTTP-клиент WB Statistics API
 │   │   ├── http_wb_stocks.py       # HTTP-клиент WB Analytics API
+│   │   ├── http_wb_order_feed.py   # Новый WB Analytics Order Feed API
 │   │   └── http_ozon_seller.py     # HTTP-клиент Ozon Seller API
 │   ├── jobs/
 │   │   ├── job_wb_orders.py        # WB заказы
+│   │   ├── job_wb_order_feed.py    # WB лента заказов, текущие статусы
 │   │   ├── job_wb_stocks.py        # WB остатки
 │   │   ├── job_ozon_orders.py      # Ozon FBO заказы
 │   │   ├── job_ozon_stocks.py      # Ozon остатки
@@ -142,6 +144,18 @@ Register-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Orders_Sync" `
 powershell -ExecutionPolicy Bypass -File .\scripts\register_ozon_orders_task.ps1
 ```
 
+#### WB Лента заказов — каждые 15 минут
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\register_wb_order_feed_task.ps1
+```
+
+Задача `\DB_MP\WB_Order_Feed_Sync` повторно получает последние 31 сутки,
+потому что WB меняет статус уже созданного заказа. Она сохраняет raw HTTP-ответы,
+текущее техническое состояние и отдельную историю изменений по `srid`.
+Старый `WB_Orders_Sync` пока продолжает работать: он нужен для истории до 31 дня
+и для безопасного сравнения нового источника.
+
 Задача в Планировщике будет называться
 `\DB_MP\Ozon_Orders_Sync`. Она запускает
 `scripts\run_ozon_orders.cmd` через скрытый wrapper `scripts\run_hidden.vbs`,
@@ -203,6 +217,9 @@ Register-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Stocks_Sync" `
 | Таблица               | Назначение                                              |
 |-----------------------|---------------------------------------------------------|
 | `wb_orders_norm`      | Нормализованные заказы WB (основная, 27 полей)          |
+| `raw.wb_order_feed_orders` | Текущее raw-состояние заказа из нового WB Order Feed |
+| `raw.wb_order_feed_order_versions` | История изменений статусов нового WB Order Feed |
+| `staging.wb_order_feed_orders_full` | Полная техническая таблица Order Feed |
 | `wb_orders_raw_dedup` | Сырые JSON-версии изменений (хранятся 14 дней)          |
 | `wb_stocks_snap`      | Актуальные остатки по складам (upsert по ключу)         |
 | `wb_stocks_raw`       | Полный слепок каждого запроса остатков (30 дней)        |
