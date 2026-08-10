@@ -2,7 +2,7 @@
 param(
     [string]$TaskPath = "\DB_MP\",
     [string]$TaskName = "Source_Files_Refresh",
-    [int]$EveryMinutes = 5,
+    [int]$EveryMinutes = 1,
     [string]$Root = "",
     [switch]$SkipFileChecks,
     [switch]$RunNow

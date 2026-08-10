@@ -445,7 +445,7 @@ scripts\run_source_statistics.cmd
 scripts\run_source_files_refresh.cmd
 ```
 
-Регистрация проверки каждые 5 минут в Windows Task Scheduler:
+Регистрация проверки каждую 1 минуту в Windows Task Scheduler:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\register_source_files_refresh_task.ps1
