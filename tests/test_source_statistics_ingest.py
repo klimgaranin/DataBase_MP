@@ -15,6 +15,7 @@ from app.normalize.norm_source_statistics import (
     normalize_stock_summary,
     normalize_supply_pipeline,
 )
+from app.jobs.job_source_statistics import _file_changed
 
 
 class SourceStatisticsExcelTests(unittest.TestCase):
@@ -73,6 +74,31 @@ class SourceStatisticsNormalizationTests(unittest.TestCase):
         self.assertEqual(inventory["ts_qty"], 5)
         self.assertEqual(pipeline["minsk_date"].isoformat(), "2026-07-01")
         self.assertEqual(pipeline["ready_qty"], 3)
+
+    def test_file_changed_uses_latest_saved_sha(self) -> None:
+        def latest_sha256(*, source_name: str, table_name: str) -> str | None:
+            self.assertEqual(source_name, "Остатки МП")
+            self.assertEqual(table_name, "Остатки_СМП_ОСН_СОХ_СВХ_ТС")
+            return "old"
+
+        self.assertFalse(
+            _file_changed(
+                source_name="Остатки МП",
+                table_name="Остатки_СМП_ОСН_СОХ_СВХ_ТС",
+                sha256="old",
+                latest_sha256=latest_sha256,
+                skip_unchanged=True,
+            )
+        )
+        self.assertTrue(
+            _file_changed(
+                source_name="Остатки МП",
+                table_name="Остатки_СМП_ОСН_СОХ_СВХ_ТС",
+                sha256="new",
+                latest_sha256=latest_sha256,
+                skip_unchanged=True,
+            )
+        )
 
 
 if __name__ == "__main__":

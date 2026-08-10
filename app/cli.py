@@ -129,6 +129,28 @@ def build_parser() -> argparse.ArgumentParser:
     sheets_api_erp_tru_sales.add_argument("--mode", choices=("upsert", "replace"), default="replace")
     sheets_api_erp_tru_sales.add_argument("--dry-run", action="store_true")
 
+    sheets_source_inventory = sheets_subparsers.add_parser(
+        "source-production-inventory",
+        help="выгрузить внутренние остатки МП в DATA",
+    )
+    sheets_source_inventory.add_argument("--spreadsheet-id")
+    sheets_source_inventory.add_argument("--sheet-name", default="DATA")
+    sheets_source_inventory.add_argument("--start-cell", default="Q1")
+    sheets_source_inventory.add_argument("--limit", type=int)
+    sheets_source_inventory.add_argument("--mode", choices=("upsert", "replace"), default="replace")
+    sheets_source_inventory.add_argument("--dry-run", action="store_true")
+
+    sheets_source_pipeline = sheets_subparsers.add_parser(
+        "source-supply-pipeline",
+        help="выгрузить список заказов в DATA",
+    )
+    sheets_source_pipeline.add_argument("--spreadsheet-id")
+    sheets_source_pipeline.add_argument("--sheet-name", default="DATA")
+    sheets_source_pipeline.add_argument("--start-cell", default="X1")
+    sheets_source_pipeline.add_argument("--limit", type=int)
+    sheets_source_pipeline.add_argument("--mode", choices=("upsert", "replace"), default="replace")
+    sheets_source_pipeline.add_argument("--dry-run", action="store_true")
+
     return parser
 
 

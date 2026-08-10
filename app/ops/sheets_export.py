@@ -15,10 +15,14 @@ from app.db import connect
 ORDER_EXPORT_HEADERS = ["Дата", "Артикул", "Кол-во", "Сумма"]
 OZON_PLACEMENT_EXPORT_HEADERS = ["Артикул", "Платно, шт", "Платно, л", "Списано в день, RUB", "Дней до первой платности"]
 API_ERP_TRU_SALES_EXPORT_HEADERS = ["Артикул", "Кол-во"]
+SOURCE_PRODUCTION_INVENTORY_EXPORT_HEADERS = ["Артикул", "СМП", "ОСН", "СОХ", "СВХ", "ТС"]
+SOURCE_SUPPLY_PIPELINE_EXPORT_HEADERS = ["Артикул", "СОГЛ Заказа", "В ПРОИЗВ", "ГОТОВ", "В ПУТИ", "МИНСК"]
 DEFAULT_ORDERS_SHEET_NAME = "DATA"
 DEFAULT_OZON_START_CELL = "A1"
 DEFAULT_WB_START_CELL = "F1"
 DEFAULT_OZON_PLACEMENT_START_CELL = "K1"
+DEFAULT_SOURCE_PRODUCTION_INVENTORY_START_CELL = "Q1"
+DEFAULT_SOURCE_SUPPLY_PIPELINE_START_CELL = "X1"
 DEFAULT_API_ERP_TRU_SALES_START_CELL = "AE1"
 OZON_ORDER_EXPORT_TIME_ZONE = "UTC"
 WB_ORDER_EXPORT_TIME_ZONE = "UTC"
@@ -46,6 +50,26 @@ class OzonPlacementSheetRow:
 class ApiErpTruSalesSheetRow:
     article: str
     sales_count: int
+
+
+@dataclass(frozen=True)
+class SourceProductionInventorySheetRow:
+    article: str
+    smp_qty: int
+    osn_qty: int
+    soh_qty: int
+    svh_qty: int
+    ts_qty: int
+
+
+@dataclass(frozen=True)
+class SourceSupplyPipelineSheetRow:
+    article: str
+    approved_order_qty: int
+    in_production_qty: int
+    ready_qty: int
+    in_way_qty: int
+    minsk_date: date | None
 
 
 @dataclass(frozen=True)
@@ -91,6 +115,16 @@ class PlacementExportResult:
 
 @dataclass(frozen=True)
 class ApiErpTruSalesExportResult:
+    sheet_name: str
+    start_cell: str
+    rows_count: int
+    sync: SheetSyncResult | None
+    dry_run: bool
+
+
+@dataclass(frozen=True)
+class SourceBlockExportResult:
+    block: Literal["production-inventory", "supply-pipeline"]
     sheet_name: str
     start_cell: str
     rows_count: int
@@ -184,6 +218,29 @@ def build_api_erp_tru_sales_sheet_values(rows: Sequence[ApiErpTruSalesSheetRow])
     values: list[list[Any]] = [API_ERP_TRU_SALES_EXPORT_HEADERS]
     for row in rows:
         values.append([row.article, row.sales_count])
+    return values
+
+
+def build_source_production_inventory_sheet_values(rows: Sequence[SourceProductionInventorySheetRow]) -> list[list[Any]]:
+    values: list[list[Any]] = [SOURCE_PRODUCTION_INVENTORY_EXPORT_HEADERS]
+    for row in rows:
+        values.append([row.article, row.smp_qty, row.osn_qty, row.soh_qty, row.svh_qty, row.ts_qty])
+    return values
+
+
+def build_source_supply_pipeline_sheet_values(rows: Sequence[SourceSupplyPipelineSheetRow]) -> list[list[Any]]:
+    values: list[list[Any]] = [SOURCE_SUPPLY_PIPELINE_EXPORT_HEADERS]
+    for row in rows:
+        values.append(
+            [
+                row.article,
+                row.approved_order_qty,
+                row.in_production_qty,
+                row.ready_qty,
+                row.in_way_qty,
+                "" if row.minsk_date is None else format_sheet_date(row.minsk_date),
+            ]
+        )
     return values
 
 
@@ -640,6 +697,65 @@ def fetch_api_erp_tru_sales_sheet_rows(*, limit: int | None = None) -> list[ApiE
             ]
 
 
+def fetch_source_production_inventory_sheet_rows(*, limit: int | None = None) -> list[SourceProductionInventorySheetRow]:
+    limit_sql = "LIMIT %s" if limit is not None else ""
+    params: list[Any] = []
+    if limit is not None:
+        params.append(limit)
+    sql = f"""
+        WITH latest AS (
+            SELECT MAX(snapped_at) AS snapped_at
+            FROM core.production_inventory_snapshot
+        )
+        SELECT p.article, p.smp_qty, p.osn_qty, p.soh_qty, p.svh_qty, p.ts_qty
+        FROM core.production_inventory_snapshot p
+        JOIN latest l ON l.snapped_at = p.snapped_at
+        ORDER BY p.article
+        {limit_sql}
+    """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [
+                SourceProductionInventorySheetRow(
+                    article=str(article or ""),
+                    smp_qty=int(smp_qty or 0),
+                    osn_qty=int(osn_qty or 0),
+                    soh_qty=int(soh_qty or 0),
+                    svh_qty=int(svh_qty or 0),
+                    ts_qty=int(ts_qty or 0),
+                )
+                for article, smp_qty, osn_qty, soh_qty, svh_qty, ts_qty in cur.fetchall()
+            ]
+
+
+def fetch_source_supply_pipeline_sheet_rows(*, limit: int | None = None) -> list[SourceSupplyPipelineSheetRow]:
+    limit_sql = "LIMIT %s" if limit is not None else ""
+    params: list[Any] = []
+    if limit is not None:
+        params.append(limit)
+    sql = f"""
+        SELECT article, approved_order_qty, in_production_qty, ready_qty, in_way_qty, minsk_date
+        FROM staging.supply_pipeline_current
+        ORDER BY article
+        {limit_sql}
+    """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [
+                SourceSupplyPipelineSheetRow(
+                    article=str(article or ""),
+                    approved_order_qty=int(approved_order_qty or 0),
+                    in_production_qty=int(in_production_qty or 0),
+                    ready_qty=int(ready_qty or 0),
+                    in_way_qty=int(in_way_qty or 0),
+                    minsk_date=minsk_date,
+                )
+                for article, approved_order_qty, in_production_qty, ready_qty, in_way_qty, minsk_date in cur.fetchall()
+            ]
+
+
 def default_placement_expected_date(now: datetime | None = None) -> date:
     current = now or datetime.now(PLACEMENT_REPORT_TZ)
     if current.tzinfo is None:
@@ -824,6 +940,124 @@ def export_ozon_placement_to_sheets(**kwargs: Any) -> int:
 def export_api_erp_tru_sales_to_sheets(**kwargs: Any) -> int:
     result = run_api_erp_tru_sales_to_sheets(verbose=True, **kwargs)
     return 0 if result is not None else 1
+
+
+def export_source_block_to_sheets(
+    *,
+    block: Literal["production-inventory", "supply-pipeline"],
+    **kwargs: Any,
+) -> int:
+    result = run_source_block_to_sheets(block=block, verbose=True, **kwargs)
+    return 0 if result is not None else 1
+
+
+def run_source_block_to_sheets(
+    *,
+    block: Literal["production-inventory", "supply-pipeline"],
+    spreadsheet_id: str | None = None,
+    sheet_name: str = DEFAULT_ORDERS_SHEET_NAME,
+    start_cell: str | None = None,
+    limit: int | None = None,
+    mode: Literal["upsert", "replace"] = "replace",
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> SourceBlockExportResult:
+    config = get_config()
+    target_spreadsheet_id = spreadsheet_id or config.analytics_mp_spreadsheet_id
+
+    if block == "production-inventory":
+        target_start_cell = start_cell or DEFAULT_SOURCE_PRODUCTION_INVENTORY_START_CELL
+        headers = SOURCE_PRODUCTION_INVENTORY_EXPORT_HEADERS
+        rows = fetch_source_production_inventory_sheet_rows(limit=limit)
+        values = build_source_production_inventory_sheet_values(rows)
+        label = "Остатки МП"
+    else:
+        target_start_cell = start_cell or DEFAULT_SOURCE_SUPPLY_PIPELINE_START_CELL
+        headers = SOURCE_SUPPLY_PIPELINE_EXPORT_HEADERS
+        rows = fetch_source_supply_pipeline_sheet_rows(limit=limit)
+        values = build_source_supply_pipeline_sheet_values(rows)
+        label = "Список заказов"
+
+    if verbose:
+        print(f"{label}: подготовлено строк: {len(rows)}")
+        print(f"Лист: {sheet_name}, стартовая ячейка: {target_start_cell}, режим: {mode}")
+        if rows[:3]:
+            print("Первые строки:")
+            for value_row in values[1:4]:
+                print(" | ".join(str(value) for value in value_row))
+
+    from app.clients.google_sheets import GoogleSheetsClient
+
+    client = GoogleSheetsClient(credentials_path=_resolve_project_path(config.google_application_credentials))
+    if dry_run:
+        start_column, end_column, _ = _target_columns(target_start_cell, len(headers))
+        existing = client.get_values(
+            spreadsheet_id=target_spreadsheet_id,
+            sheet_name=sheet_name,
+            a1_range=f"{start_column}:{end_column}",
+        )
+        plan = plan_sheet_table_sync(
+            existing=existing,
+            start_cell=target_start_cell,
+            values=values,
+            mode=mode,
+            headers=headers,
+            key_columns=1,
+            replace_on_order_change=True,
+        )
+        if verbose:
+            print(
+                "Dry-run план Google Sheets: "
+                f"существующих строк {plan.existing_rows}, "
+                f"без изменений {plan.unchanged_rows}, "
+                f"будет обновлено {plan.changed_rows}, "
+                f"будет добавлено {plan.appended_rows}, "
+                f"устаревших строк {plan.stale_rows}, "
+                f"очистка блока: {'да' if plan.cleared else 'нет'}, "
+                f"ожидаемо ячеек к изменению {plan.updated_cells}"
+            )
+            print("Dry-run: запись в Google Sheets не выполнялась")
+        return SourceBlockExportResult(
+            block=block,
+            sheet_name=sheet_name,
+            start_cell=target_start_cell,
+            rows_count=len(rows),
+            sync=plan,
+            dry_run=True,
+        )
+
+    sync = sync_sheet_table(
+        client=client,
+        spreadsheet_id=target_spreadsheet_id,
+        sheet_name=sheet_name,
+        start_cell=target_start_cell,
+        values=values,
+        mode=mode,
+        headers=headers,
+        key_columns=1,
+        replace_on_order_change=True,
+    )
+    if verbose:
+        if sync.cleared:
+            print(f"Google Sheets: диапазон перезаписан: {sync.updated_range}")
+        print(
+            "Google Sheets: "
+            f"существующих строк {sync.existing_rows}, "
+            f"без изменений {sync.unchanged_rows}, "
+            f"обновлено {sync.changed_rows}, "
+            f"добавлено {sync.appended_rows}, "
+            f"устаревших убрано {sync.stale_rows}, "
+            f"строк листа добавлено={sync.added_sheet_rows}, "
+            f"ячеек изменено {sync.updated_cells}"
+        )
+    return SourceBlockExportResult(
+        block=block,
+        sheet_name=sheet_name,
+        start_cell=target_start_cell,
+        rows_count=len(rows),
+        sync=sync,
+        dry_run=False,
+    )
 
 
 def run_api_erp_tru_sales_to_sheets(
@@ -1078,6 +1312,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_sheet_args(api_erp_tru_sales, default_start_cell=DEFAULT_API_ERP_TRU_SALES_START_CELL, default_mode="replace")
 
+    source_inventory = subparsers.add_parser(
+        "source-production-inventory",
+        help="выгрузить внутренние остатки МП в DATA",
+    )
+    _add_common_sheet_args(source_inventory, default_start_cell=DEFAULT_SOURCE_PRODUCTION_INVENTORY_START_CELL, default_mode="replace")
+
+    source_pipeline = subparsers.add_parser(
+        "source-supply-pipeline",
+        help="выгрузить список заказов в DATA",
+    )
+    _add_common_sheet_args(source_pipeline, default_start_cell=DEFAULT_SOURCE_SUPPLY_PIPELINE_START_CELL, default_mode="replace")
+
     return parser
 
 
@@ -1109,6 +1355,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     if args.command == "api-erp-tru-sales":
         return export_api_erp_tru_sales_to_sheets(
+            spreadsheet_id=args.spreadsheet_id,
+            sheet_name=args.sheet_name,
+            start_cell=args.start_cell,
+            limit=args.limit,
+            mode=args.mode,
+            dry_run=args.dry_run,
+        )
+    if args.command == "source-production-inventory":
+        return export_source_block_to_sheets(
+            block="production-inventory",
+            spreadsheet_id=args.spreadsheet_id,
+            sheet_name=args.sheet_name,
+            start_cell=args.start_cell,
+            limit=args.limit,
+            mode=args.mode,
+            dry_run=args.dry_run,
+        )
+    if args.command == "source-supply-pipeline":
+        return export_source_block_to_sheets(
+            block="supply-pipeline",
             spreadsheet_id=args.spreadsheet_id,
             sheet_name=args.sheet_name,
             start_cell=args.start_cell,

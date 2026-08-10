@@ -21,6 +21,7 @@ from app.clients.http_ozon_seller import (
 from app.jobs.job_ozon_placement import _archive_report_file, default_placement_report_date
 from app.jobs.job_ozon_placement_retry import should_retry_placement
 from app.clients.local_source_files import (
+    file_sha256,
     read_first_sheet_rows,
     read_local_table_rows,
     read_production_inventory_rows,
@@ -385,6 +386,8 @@ class PlacementAndLocalFileTests(unittest.TestCase):
 
             inventory = read_production_inventory_rows(stocks_path)
             self.assertEqual(inventory, [{"Артикул": "ART", "СМП": 4.0, "ОСН": 2.0, "СОХ": 3.0, "СВХ": 0.0, "ТС": 4.0}])
+
+            self.assertEqual(file_sha256(stocks_path), file_sha256(stocks_path))
 
 
 if __name__ == "__main__":

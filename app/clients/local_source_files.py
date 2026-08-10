@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 from pathlib import Path
 from typing import Any
 
 from openpyxl import load_workbook
+
+
+def file_sha256(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def resolve_latest_file(path: str | Path, *, patterns: tuple[str, ...]) -> Path:

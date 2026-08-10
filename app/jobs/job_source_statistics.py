@@ -7,7 +7,6 @@ ETL-джоб: файловая статистика из Excel "Статисти
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import sys
 from pathlib import Path
@@ -24,6 +23,7 @@ load_env(__file__)
 
 from app.clients.source_statistics_excel import ExcelTableData, read_excel_tables
 from app.clients.local_source_files import (
+    file_sha256,
     read_production_inventory_rows,
     read_supply_pipeline_rows,
     resolve_latest_file,
@@ -49,6 +49,7 @@ ACTIVE_INTERNAL_TABLES = {"Остатки_СМП_ОСН_СОХ_СВХ_ТС", "С
 def _db_functions() -> dict[str, object]:
     from app.db import (
         advisory_unlock,
+        get_latest_source_file_sha256,
         insert_job_run,
         insert_production_inventory_snapshot,
         insert_source_file_snapshots,
@@ -61,6 +62,7 @@ def _db_functions() -> dict[str, object]:
 
     return {
         "advisory_unlock": advisory_unlock,
+        "get_latest_source_file_sha256": get_latest_source_file_sha256,
         "insert_job_run": insert_job_run,
         "insert_production_inventory_snapshot": insert_production_inventory_snapshot,
         "insert_source_file_snapshots": insert_source_file_snapshots,
@@ -81,6 +83,8 @@ def _load_job_config() -> dict[str, object]:
     log_file = (os.getenv("SOURCE_STATISTICS_LOG_FILE") or "").strip() or None
     orders_list_path = os.getenv("SOURCE_STATISTICS_ORDERS_LIST_PATH", r"\\tsclient\P\Список заказов").strip()
     stocks_1c_path = os.getenv("SOURCE_STATISTICS_1C_STOCKS_PATH", r"\\tsclient\S\МП").strip()
+    skip_unchanged = os.getenv("SOURCE_STATISTICS_SKIP_UNCHANGED", "1").strip().lower() in {"1", "true", "yes", "да"}
+    no_changes_exit_code = int(os.getenv("SOURCE_STATISTICS_NO_CHANGES_EXIT_CODE", "0") or "0")
     return {
         "source_path": source_path,
         "include_wb_tables": include_wb_tables,
@@ -88,15 +92,9 @@ def _load_job_config() -> dict[str, object]:
         "log_file": log_file,
         "orders_list_path": orders_list_path,
         "stocks_1c_path": stocks_1c_path,
+        "skip_unchanged": skip_unchanged,
+        "no_changes_exit_code": no_changes_exit_code,
     }
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _raw_snapshots(tables: list[ExcelTableData]) -> list[dict]:
@@ -112,6 +110,34 @@ def _raw_snapshots(tables: list[ExcelTableData]) -> list[dict]:
         }
         for table in tables
     ]
+
+
+def _source_snapshot(
+    *,
+    source_name: str,
+    path: Path,
+    sha256: str,
+    table_name: str,
+    rows: list[dict],
+) -> dict:
+    return {
+        "source_name": source_name,
+        "file_path": str(path),
+        "file_sha256": sha256,
+        "table_name": table_name,
+        "row_count": len(rows),
+        "payload": {"rows": rows},
+    }
+
+
+def _empty_normalized() -> dict[str, list[dict]]:
+    return {
+        "orders": [],
+        "stocks": [],
+        "ozon_storage": [],
+        "production_inventory": [],
+        "supply_pipeline": [],
+    }
 
 
 def _normalize_tables(tables: list[ExcelTableData]) -> dict[str, list[dict]]:
@@ -168,15 +194,62 @@ def _normalize_tables(tables: list[ExcelTableData]) -> dict[str, list[dict]]:
     }
 
 
-def _apply_direct_file_sources(normalized: dict[str, list[dict]], cfg: dict[str, object], log) -> None:
+def _file_changed(
+    *,
+    source_name: str,
+    table_name: str,
+    sha256: str,
+    latest_sha256,
+    skip_unchanged: bool,
+) -> bool:
+    if not skip_unchanged or latest_sha256 is None:
+        return True
+    previous = latest_sha256(source_name=source_name, table_name=table_name)
+    return previous != sha256
+
+
+def _apply_direct_file_sources(
+    normalized: dict[str, list[dict]],
+    cfg: dict[str, object],
+    log,
+    *,
+    latest_sha256=None,
+) -> tuple[list[dict], set[str], int, int]:
+    snapshots: list[dict] = []
+    missing_tables: set[str] = set()
+    unchanged_files = 0
+    direct_source_rows = 0
+    skip_unchanged = bool(cfg.get("skip_unchanged"))
+
     try:
         orders_path = resolve_latest_file(str(cfg["orders_list_path"]), patterns=("Список*.xlsx", "*.xlsx"))
+        orders_sha = file_sha256(orders_path)
         rows = read_supply_pipeline_rows(orders_path)
+        direct_source_rows += len(rows)
         direct_rows = [row for source_row in rows for row in [normalize_supply_pipeline(source_row)] if row is not None]
-        if direct_rows:
+        if _file_changed(
+            source_name="Список заказов",
+            table_name="Список_заказов",
+            sha256=orders_sha,
+            latest_sha256=latest_sha256,
+            skip_unchanged=skip_unchanged,
+        ):
             normalized["supply_pipeline"] = direct_rows
+            snapshots.append(
+                _source_snapshot(
+                    source_name="Список заказов",
+                    path=orders_path,
+                    sha256=orders_sha,
+                    table_name="Список_заказов",
+                    rows=rows,
+                )
+            )
             log.info("Файловая статистика: список заказов прочитан из файла=%s, строк=%d", orders_path, len(direct_rows))
+        else:
+            unchanged_files += 1
+            log.info("Файловая статистика: список заказов не изменился, запись пропущена: %s", orders_path)
     except Exception as exc:
+        missing_tables.add("Список_заказов")
         log.warning("Файловая статистика: список заказов не прочитан напрямую, используем данные из XLSM: %s", exc)
 
     try:
@@ -184,13 +257,43 @@ def _apply_direct_file_sources(normalized: dict[str, list[dict]], cfg: dict[str,
             str(cfg["stocks_1c_path"]),
             patterns=("Остатки*.txt", "*.txt", "Остатки*.xls", "*.xls"),
         )
+        stocks_sha = file_sha256(stocks_path)
         rows = read_production_inventory_rows(stocks_path)
+        direct_source_rows += len(rows)
         direct_rows = [row for source_row in rows for row in [normalize_production_inventory(source_row)] if row is not None]
-        if direct_rows:
+        if _file_changed(
+            source_name="Остатки МП",
+            table_name="Остатки_СМП_ОСН_СОХ_СВХ_ТС",
+            sha256=stocks_sha,
+            latest_sha256=latest_sha256,
+            skip_unchanged=skip_unchanged,
+        ):
             normalized["production_inventory"] = direct_rows
+            snapshots.append(
+                _source_snapshot(
+                    source_name="Остатки МП",
+                    path=stocks_path,
+                    sha256=stocks_sha,
+                    table_name="Остатки_СМП_ОСН_СОХ_СВХ_ТС",
+                    rows=rows,
+                )
+            )
             log.info("Файловая статистика: остатки 1С прочитаны из файла=%s, строк=%d", stocks_path, len(direct_rows))
+        else:
+            unchanged_files += 1
+            log.info("Файловая статистика: остатки 1С не изменились, запись пропущена: %s", stocks_path)
     except Exception as exc:
+        missing_tables.add("Остатки_СМП_ОСН_СОХ_СВХ_ТС")
         log.warning("Файловая статистика: остатки 1С не прочитаны напрямую, используем данные из XLSM: %s", exc)
+    return snapshots, missing_tables, unchanged_files, direct_source_rows
+
+
+def _group_snapshots_by_source(snapshots: list[dict]) -> dict[str, list[dict]]:
+    grouped: dict[str, list[dict]] = {}
+    for snapshot in snapshots:
+        source_name = str(snapshot["source_name"])
+        grouped.setdefault(source_name, []).append(snapshot)
+    return grouped
 
 
 def main() -> int:
@@ -212,42 +315,72 @@ def main() -> int:
     raw_inserted = 0
     norm_upserted = 0
     source_rows = 0
+    no_changes = False
 
     try:
         source_path = cfg["source_path"]
         if not isinstance(source_path, Path):
             raise RuntimeError("Некорректный SOURCE_STATISTICS_FILE")
-        if not source_path.exists():
-            raise FileNotFoundError(f"Файл статистики не найден: {source_path}")
 
-        all_tables = read_excel_tables(source_path)
-        if cfg["include_wb_tables"]:
-            tables = all_tables
-        else:
-            tables = [table for table in all_tables if table.name in ACTIVE_INTERNAL_TABLES]
-        source_rows = sum(len(table.rows) for table in tables)
-        log.info(
-            "Файловая статистика: прочитано таблиц=%d, строк=%d, включены старые WB/Ozon/Yandex таблицы=%s",
-            len(tables),
-            source_rows,
-            cfg["include_wb_tables"],
+        normalized = _empty_normalized()
+        latest_sha256 = None if cfg["dry_run"] else db["get_latest_source_file_sha256"]
+        direct_snapshots, missing_tables, unchanged_files, direct_source_rows = _apply_direct_file_sources(
+            normalized,
+            cfg,
+            log,
+            latest_sha256=latest_sha256,
         )
+        source_rows = direct_source_rows
 
-        file_sha = _file_sha256(source_path)
-        normalized = _normalize_tables(tables)
-        _apply_direct_file_sources(normalized, cfg, log)
-        if cfg["dry_run"]:
-            log.info("Файловая статистика: сухой запуск, запись в БД пропущена, SHA-256 XLSM=%s", file_sha)
-            norm_upserted = sum(len(rows) for rows in normalized.values())
-        else:
-            raw_inserted = db["insert_source_file_snapshots"](
-                run_id=started_at,
-                source_name="Статистика.xlsm",
-                file_path=str(source_path),
-                file_sha256=file_sha,
-                tables=_raw_snapshots(tables),
+        tables: list[ExcelTableData] = []
+        xlsm_snapshots: list[dict] = []
+        need_xlsm = bool(cfg["include_wb_tables"]) or bool(missing_tables)
+        if need_xlsm:
+            if not source_path.exists():
+                raise FileNotFoundError(f"Файл статистики не найден: {source_path}")
+            all_tables = read_excel_tables(source_path)
+            if cfg["include_wb_tables"]:
+                tables = all_tables
+            else:
+                tables = [table for table in all_tables if table.name in missing_tables]
+            xlsm_normalized = _normalize_tables(tables)
+            for key, rows in xlsm_normalized.items():
+                if rows and not normalized[key]:
+                    normalized[key] = rows
+            xlsm_snapshots = [
+                {
+                    "source_name": "Статистика.xlsm",
+                    "file_path": str(source_path),
+                    "file_sha256": file_sha256(source_path),
+                    **snapshot,
+                }
+                for snapshot in _raw_snapshots(tables)
+            ]
+            source_rows += sum(len(table.rows) for table in tables)
+            log.info(
+                "Файловая статистика: fallback XLSM таблиц=%d, строк=%d, включены старые WB/Ozon/Yandex таблицы=%s",
+                len(tables),
+                sum(len(table.rows) for table in tables),
+                cfg["include_wb_tables"],
             )
 
+        snapshots = direct_snapshots + xlsm_snapshots
+        changed_files = len(direct_snapshots)
+        if cfg["skip_unchanged"] and not snapshots and unchanged_files:
+            no_changes = True
+            log.info("Файловая статистика: изменений в прямых файлах нет, БД не обновлялась.")
+        if cfg["dry_run"]:
+            log.info("Файловая статистика: сухой запуск, запись в БД пропущена.")
+            norm_upserted = sum(len(rows) for rows in normalized.values())
+        elif snapshots:
+            for source_name, grouped in _group_snapshots_by_source(snapshots).items():
+                raw_inserted += db["insert_source_file_snapshots"](
+                    run_id=started_at,
+                    source_name=source_name,
+                    file_path=grouped[0]["file_path"],
+                    file_sha256=grouped[0]["file_sha256"],
+                    tables=grouped,
+                )
             norm_upserted += db["upsert_source_orders_daily"](normalized["orders"], run_id=started_at)
             norm_upserted += db["upsert_source_stock_summary"](normalized["stocks"], run_id=started_at, snapped_at=snapped_at)
             norm_upserted += db["upsert_ozon_storage_costs"](normalized["ozon_storage"], run_id=started_at, snapped_at=snapped_at)
@@ -255,15 +388,19 @@ def main() -> int:
             norm_upserted += db["upsert_supply_pipeline_current"](normalized["supply_pipeline"], run_id=started_at, snapped_at=snapped_at)
 
         log.info(
-            "Файловая статистика: raw snapshot=%d, строк к записи=%d, старые заказы=%d, старые остатки=%d, старое хранение Ozon=%d, остатки 1С=%d, список заказов=%d",
+            "Файловая статистика: raw snapshot=%d, строк к записи=%d, изменённых прямых файлов=%d, без изменений=%d, старые заказы=%d, старые остатки=%d, старое хранение Ozon=%d, остатки 1С=%d, список заказов=%d",
             raw_inserted,
             norm_upserted,
+            changed_files,
+            unchanged_files,
             len(normalized["orders"]),
             len(normalized["stocks"]),
             len(normalized["ozon_storage"]),
             len(normalized["production_inventory"]),
             len(normalized["supply_pipeline"]),
         )
+        if no_changes:
+            return int(cfg.get("no_changes_exit_code") or 0)
         return 0
 
     except Exception as exc:
@@ -275,7 +412,7 @@ def main() -> int:
     finally:
         finished_at = now_iso_utc()
         try:
-            if not cfg.get("dry_run"):
+            if not cfg.get("dry_run") and not no_changes:
                 db["insert_job_run"](
                     job_name=JOB_NAME,
                     started_at_iso=started_at,
@@ -298,7 +435,9 @@ def main() -> int:
             pass
         else:
             ts = now_msk_label()
-            if status == "ok":
+            if no_changes and status == "ok":
+                msg = ""
+            elif status == "ok":
                 msg = (
                     f"✅ Source_Statistics | {ts} | OK\n\n"
                     f"➡ Файл строк: {source_rows}\n\n"
@@ -306,7 +445,8 @@ def main() -> int:
                 )
             else:
                 msg = f"❌ Source_Statistics | {ts} | FAIL\n{(error or 'unknown')[:200]}"
-            tg_send(msg, logger=log)
+            if msg:
+                tg_send(msg, logger=log)
 
         if lock_acquired:
             db["advisory_unlock"](LOCK_ID)

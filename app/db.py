@@ -1005,6 +1005,25 @@ def insert_source_file_snapshots(
             return len(values)
 
 
+def get_latest_source_file_sha256(*, source_name: str, table_name: str) -> str | None:
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_DDL_SOURCE_FILE_SNAPSHOTS)
+            cur.execute(
+                """
+                SELECT file_sha256
+                FROM raw.source_file_snapshots
+                WHERE source_name = %s
+                  AND table_name = %s
+                ORDER BY loaded_at DESC, id DESC
+                LIMIT 1
+                """,
+                (source_name, table_name),
+            )
+            row = cur.fetchone()
+            return str(row[0]) if row else None
+
+
 def upsert_source_orders_daily(rows: list[dict[str, Any]], *, run_id: str) -> int:
     if not rows:
         return 0

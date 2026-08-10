@@ -11,9 +11,13 @@ from app.ops.sheets_export import (
     DEFAULT_WB_START_CELL,
     OzonPlacementSheetRow,
     OzonOrderSheetRow,
+    SourceProductionInventorySheetRow,
+    SourceSupplyPipelineSheetRow,
     WB_ORDER_EXPORT_TIME_ZONE,
     build_ozon_placement_sheet_values,
     build_ozon_order_sheet_values,
+    build_source_production_inventory_sheet_values,
+    build_source_supply_pipeline_sheet_values,
     default_orders_date_from,
     plan_sheet_table_sync,
     sync_sheet_table,
@@ -103,6 +107,37 @@ class SheetsExportTests(unittest.TestCase):
                 ["Артикул", "Платно, шт", "Платно, л", "Списано в день, RUB", "Дней до первой платности"],
                 ["21045", 2, 12.345, 37.5, 4],
             ],
+        )
+
+    def test_build_source_file_sheet_values(self) -> None:
+        inventory_rows = [
+            SourceProductionInventorySheetRow(
+                article="21045",
+                smp_qty=1,
+                osn_qty=2,
+                soh_qty=3,
+                svh_qty=4,
+                ts_qty=5,
+            )
+        ]
+        pipeline_rows = [
+            SourceSupplyPipelineSheetRow(
+                article="21045",
+                approved_order_qty=1,
+                in_production_qty=2,
+                ready_qty=3,
+                in_way_qty=4,
+                minsk_date=date(2026, 8, 10),
+            )
+        ]
+
+        self.assertEqual(
+            build_source_production_inventory_sheet_values(inventory_rows),
+            [["Артикул", "СМП", "ОСН", "СОХ", "СВХ", "ТС"], ["21045", 1, 2, 3, 4, 5]],
+        )
+        self.assertEqual(
+            build_source_supply_pipeline_sheet_values(pipeline_rows),
+            [["Артикул", "СОГЛ Заказа", "В ПРОИЗВ", "ГОТОВ", "В ПУТИ", "МИНСК"], ["21045", 1, 2, 3, 4, "10.08.2026"]],
         )
 
     def test_ozon_placement_fallback_warning_mentions_stale_report(self) -> None:

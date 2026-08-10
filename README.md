@@ -422,6 +422,10 @@ snapshot, staging-таблицы, `job_runs`, лог и Telegram-алерт.
 Если путь недоступен, остаётся fallback на материализованные таблицы
 `Статистика.xlsm`.
 
+Для прямых файлов job считает SHA-256 и сравнивает его с последним сохранённым
+снимком в `raw.source_file_snapshots`. Если файл не пересохраняли и содержимое
+не изменилось, БД не обновляется и Telegram-алерт не отправляется.
+
 Dry-run без записи в БД:
 
 ```powershell
@@ -435,9 +439,35 @@ set SOURCE_STATISTICS_DRY_RUN=1
 scripts\run_source_statistics.cmd
 ```
 
+Боевой запуск для Планировщика, который обновляет БД только при изменении файлов
+и после этого выгружает два блока в Google Sheets:
+
+```powershell
+scripts\run_source_files_refresh.cmd
+```
+
+Регистрация проверки каждые 5 минут в Windows Task Scheduler:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\register_source_files_refresh_task.ps1
+```
+
+Назначение на листе `DATA`:
+
+- остатки МП: `Q:V`, заголовки `Артикул`, `СМП`, `ОСН`, `СОХ`, `СВХ`, `ТС`;
+- список заказов: `X:AC`, заголовки `Артикул`, `СОГЛ Заказа`, `В ПРОИЗВ`,
+  `ГОТОВ`, `В ПУТИ`, `МИНСК`.
+
+Ручная выгрузка только Google Sheets из уже загруженной БД:
+
+```powershell
+.\.venv\Scripts\python.exe -m app.cli sheets source-production-inventory
+.\.venv\Scripts\python.exe -m app.cli sheets source-supply-pipeline
+```
+
 Новые таблицы:
 
-- `raw.source_file_snapshots` — полный слепок прочитанных Excel tables.
+- `raw.source_file_snapshots` — полный слепок прочитанных Excel/file blocks.
 - `staging.source_orders_daily` — переходная таблица для старых файловых
   заказов, по умолчанию не заполняется.
 - `staging.source_stock_summary` — переходная таблица для старых файловых
@@ -725,6 +755,9 @@ Credential Manager через `keyring`.
 | `SHEETS_API_ERP_TRU_SALES_EXPORT_LOG_FILE` | ❌ | `logs/job_sheets_api_erp_tru_sales_export.log` | Файл лога выгрузки ERP/TRU продаж |
 | `SHEETS_API_ERP_TRU_SALES_EXPORT_MODE` | ❌  | `replace`    | Режим обновления блока `DATA!AE:AF`   |
 | `SHEETS_API_ERP_TRU_SALES_EXPORT_DRY_RUN` | ❌ | `0`        | Проверить Sheets job без записи       |
+| `SHEETS_SOURCE_FILES_EXPORT_LOG_FILE` | ❌   | `logs/job_sheets_source_files_export.log` | Файл лога выгрузки файловых блоков в Google Sheets |
+| `SHEETS_SOURCE_FILES_EXPORT_MODE` | ❌       | `replace`    | Режим обновления блоков `DATA!Q:V` и `DATA!X:AC` |
+| `SHEETS_SOURCE_FILES_EXPORT_DRY_RUN` | ❌    | `0`          | Проверить Sheets job без записи       |
 | `OZON_STOCKS_LOG_FILE`         | ❌           | —            | Файл лога Ozon stocks job             |
 | `OZON_STOCKS_DRY_RUN`          | ❌           | `0`          | Проверить stocks без API/БД           |
 | `SOURCE_STATISTICS_FILE`       | ❌           | `local/source_exports/Статистика.xlsm` | Файл источника статистики |
@@ -733,6 +766,7 @@ Credential Manager через `keyring`.
 | `SOURCE_STATISTICS_INCLUDE_WB_TABLES` | ❌    | `0`          | Читать WB-блоки из Excel; обычно не нужно |
 | `SOURCE_STATISTICS_ORDERS_LIST_PATH` | ❌     | `\\tsclient\P\Список заказов` | Папка/файл списка заказов на Windows-сервере |
 | `SOURCE_STATISTICS_1C_STOCKS_PATH` | ❌        | `\\tsclient\S\МП` | Папка/файл остатков 1С на Windows-сервере |
+| `SOURCE_STATISTICS_SKIP_UNCHANGED` | ❌       | `1`          | Не обновлять БД, если прямые файлы не изменились |
 
 ### Секреты через Windows Credential Manager
 
