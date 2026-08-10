@@ -32,7 +32,8 @@ DataBase_MP/
 │   │   ├── http_wb_statistics.py   # HTTP-клиент WB Statistics API
 │   │   ├── http_wb_stocks.py       # HTTP-клиент WB Analytics API
 │   │   ├── http_wb_order_feed.py   # Новый WB Analytics Order Feed API
-│   │   └── http_ozon_seller.py     # HTTP-клиент Ozon Seller API
+│   │   ├── http_ozon_seller.py     # HTTP-клиент Ozon Seller API
+│   │   └── http_api_erp_tru.py     # HTTP-клиент ERP/TRU API
 │   ├── jobs/
 │   │   ├── job_wb_orders.py        # WB заказы
 │   │   ├── job_wb_order_feed.py    # WB лента заказов, текущие статусы
@@ -40,7 +41,9 @@ DataBase_MP/
 │   │   ├── job_ozon_orders.py      # Ozon FBO заказы
 │   │   ├── job_ozon_stocks.py      # Ozon остатки
 │   │   ├── job_ozon_placement.py   # Ozon стоимость размещения в БД
-│   │   └── job_sheets_ozon_placement_export.py # Ozon хранение в Google Sheets
+│   │   ├── job_sheets_ozon_placement_export.py # Ozon хранение в Google Sheets
+│   │   ├── job_api_erp_tru_product_stats.py # ERP/TRU статистика товаров
+│   │   └── job_sheets_api_erp_tru_sales_export.py # ERP/TRU продажи в Google Sheets
 │   ├── normalize/
 │   │   ├── norm_wb_orders.py       # Нормализация WB
 │   │   └── norm_ozon_orders.py     # Нормализация Ozon
@@ -575,6 +578,30 @@ scripts\run_sheets_ozon_placement_export.cmd
 powershell -ExecutionPolicy Bypass -File .\scripts\register_ozon_placement_retry_task.ps1
 ```
 
+ERP/TRU продажи товаров:
+
+```powershell
+scripts\run_api_erp_tru_product_stats.cmd
+scripts\run_sheets_api_erp_tru_sales_export.cmd
+.\.venv\Scripts\python.exe -m app.cli sheets api-erp-tru-sales
+```
+
+`job_api_erp_tru_product_stats.py` читает
+`/api/v1/product/stat_list/` за период от такого же числа прошлого месяца до
+сегодня. Raw HTTP сохраняется в `raw.api_responses`, строки ответа — в
+`raw.api_erp_tru_product_stat_rows`, текущий технический слой полностью
+заменяется в `staging.api_erp_tru_product_stats_current`.
+
+Для Google Sheets дублирующие артикулы группируются в
+`analytics.api_erp_tru_sales_for_sheets`: `article -> SUM(sales_count)`.
+Назначение: лист `DATA`, стартовая ячейка `AE1`, колонки `Артикул`, `Кол-во`.
+
+Регистрация ежедневных задач:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\register_api_erp_tru_sales_tasks.ps1
+```
+
 Dry-run:
 
 ```powershell
@@ -690,6 +717,14 @@ Credential Manager через `keyring`.
 | `SHEETS_OZON_PLACEMENT_EXPORT_LOG_FILE` | ❌  | `logs/job_sheets_ozon_placement_export.log` | Файл лога выгрузки Ozon хранения в Google Sheets |
 | `SHEETS_OZON_PLACEMENT_EXPORT_MODE` | ❌     | `replace`    | Режим обновления блока `DATA!K:O`     |
 | `SHEETS_OZON_PLACEMENT_EXPORT_DRY_RUN` | ❌  | `0`          | Проверить Sheets job без записи       |
+| `API_ERP_TRU_TOKEN`             | ✅ для ERP/TRU | —         | Секрет: Bearer token ERP/TRU API      |
+| `API_ERP_TRU_LOG_FILE`          | ❌           | `logs/job_api_erp_tru_product_stats.log` | Файл лога ERP/TRU product stats |
+| `API_ERP_TRU_DRY_RUN`           | ❌           | `0`          | Проверить ERP/TRU job без API/БД      |
+| `API_ERP_TRU_DATE_FROM`         | ❌           | такое же число прошлого месяца | Ручное начало периода ERP/TRU |
+| `API_ERP_TRU_DATE_TO`           | ❌           | сегодня      | Ручной конец периода ERP/TRU          |
+| `SHEETS_API_ERP_TRU_SALES_EXPORT_LOG_FILE` | ❌ | `logs/job_sheets_api_erp_tru_sales_export.log` | Файл лога выгрузки ERP/TRU продаж |
+| `SHEETS_API_ERP_TRU_SALES_EXPORT_MODE` | ❌  | `replace`    | Режим обновления блока `DATA!AE:AF`   |
+| `SHEETS_API_ERP_TRU_SALES_EXPORT_DRY_RUN` | ❌ | `0`        | Проверить Sheets job без записи       |
 | `OZON_STOCKS_LOG_FILE`         | ❌           | —            | Файл лога Ozon stocks job             |
 | `OZON_STOCKS_DRY_RUN`          | ❌           | `0`          | Проверить stocks без API/БД           |
 | `SOURCE_STATISTICS_FILE`       | ❌           | `local/source_exports/Статистика.xlsm` | Файл источника статистики |

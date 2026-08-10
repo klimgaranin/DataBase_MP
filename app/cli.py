@@ -118,6 +118,17 @@ def build_parser() -> argparse.ArgumentParser:
     sheets_ozon_placement.add_argument("--mode", choices=("upsert", "replace"), default="replace")
     sheets_ozon_placement.add_argument("--dry-run", action="store_true")
 
+    sheets_api_erp_tru_sales = sheets_subparsers.add_parser(
+        "api-erp-tru-sales",
+        help="выгрузить ERP/TRU продажи в DATA",
+    )
+    sheets_api_erp_tru_sales.add_argument("--spreadsheet-id")
+    sheets_api_erp_tru_sales.add_argument("--sheet-name", default="DATA")
+    sheets_api_erp_tru_sales.add_argument("--start-cell", default="AE1")
+    sheets_api_erp_tru_sales.add_argument("--limit", type=int)
+    sheets_api_erp_tru_sales.add_argument("--mode", choices=("upsert", "replace"), default="replace")
+    sheets_api_erp_tru_sales.add_argument("--dry-run", action="store_true")
+
     return parser
 
 

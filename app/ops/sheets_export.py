@@ -14,10 +14,12 @@ from app.db import connect
 
 ORDER_EXPORT_HEADERS = ["Дата", "Артикул", "Кол-во", "Сумма"]
 OZON_PLACEMENT_EXPORT_HEADERS = ["Артикул", "Платно, шт", "Платно, л", "Списано в день, RUB", "Дней до первой платности"]
+API_ERP_TRU_SALES_EXPORT_HEADERS = ["Артикул", "Кол-во"]
 DEFAULT_ORDERS_SHEET_NAME = "DATA"
 DEFAULT_OZON_START_CELL = "A1"
 DEFAULT_WB_START_CELL = "F1"
 DEFAULT_OZON_PLACEMENT_START_CELL = "K1"
+DEFAULT_API_ERP_TRU_SALES_START_CELL = "AE1"
 OZON_ORDER_EXPORT_TIME_ZONE = "UTC"
 WB_ORDER_EXPORT_TIME_ZONE = "UTC"
 PLACEMENT_REPORT_TZ = timezone(timedelta(hours=3), name="Europe/Minsk")
@@ -38,6 +40,12 @@ class OzonPlacementSheetRow:
     paid_liters: Decimal
     daily_writeoff_rub: Decimal
     days_until_first_paid: int | None
+
+
+@dataclass(frozen=True)
+class ApiErpTruSalesSheetRow:
+    article: str
+    sales_count: int
 
 
 @dataclass(frozen=True)
@@ -79,6 +87,15 @@ class PlacementExportResult:
     expected_report_date: date | None = None
     product_report_code: str | None = None
     product_report_rows: int | None = None
+
+
+@dataclass(frozen=True)
+class ApiErpTruSalesExportResult:
+    sheet_name: str
+    start_cell: str
+    rows_count: int
+    sync: SheetSyncResult | None
+    dry_run: bool
 
 
 OzonOrderSheetRow = OrderSheetRow
@@ -160,6 +177,13 @@ def build_ozon_placement_sheet_values(rows: Sequence[OzonPlacementSheetRow]) -> 
                 "" if row.days_until_first_paid is None else row.days_until_first_paid,
             ]
         )
+    return values
+
+
+def build_api_erp_tru_sales_sheet_values(rows: Sequence[ApiErpTruSalesSheetRow]) -> list[list[Any]]:
+    values: list[list[Any]] = [API_ERP_TRU_SALES_EXPORT_HEADERS]
+    for row in rows:
+        values.append([row.article, row.sales_count])
     return values
 
 
@@ -596,6 +620,26 @@ def fetch_ozon_placement_sheet_rows(*, limit: int | None = None) -> list[OzonPla
             ]
 
 
+def fetch_api_erp_tru_sales_sheet_rows(*, limit: int | None = None) -> list[ApiErpTruSalesSheetRow]:
+    limit_sql = "LIMIT %s" if limit is not None else ""
+    params: list[Any] = []
+    if limit is not None:
+        params.append(limit)
+    sql = f"""
+        SELECT article, sales_count
+        FROM analytics.api_erp_tru_sales_for_sheets
+        ORDER BY article
+        {limit_sql}
+    """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [
+                ApiErpTruSalesSheetRow(article=str(article or ""), sales_count=int(sales_count or 0))
+                for article, sales_count in cur.fetchall()
+            ]
+
+
 def default_placement_expected_date(now: datetime | None = None) -> date:
     current = now or datetime.now(PLACEMENT_REPORT_TZ)
     if current.tzinfo is None:
@@ -777,6 +821,106 @@ def export_ozon_placement_to_sheets(**kwargs: Any) -> int:
     return 0 if result is not None else 1
 
 
+def export_api_erp_tru_sales_to_sheets(**kwargs: Any) -> int:
+    result = run_api_erp_tru_sales_to_sheets(verbose=True, **kwargs)
+    return 0 if result is not None else 1
+
+
+def run_api_erp_tru_sales_to_sheets(
+    *,
+    spreadsheet_id: str | None = None,
+    sheet_name: str = DEFAULT_ORDERS_SHEET_NAME,
+    start_cell: str = DEFAULT_API_ERP_TRU_SALES_START_CELL,
+    limit: int | None = None,
+    mode: Literal["upsert", "replace"] = "replace",
+    dry_run: bool = False,
+    verbose: bool = False,
+) -> ApiErpTruSalesExportResult:
+    config = get_config()
+    target_spreadsheet_id = spreadsheet_id or config.analytics_mp_spreadsheet_id
+    rows = fetch_api_erp_tru_sales_sheet_rows(limit=limit)
+    values = build_api_erp_tru_sales_sheet_values(rows)
+
+    if verbose:
+        print(f"ERP/TRU продажи: подготовлено строк: {len(rows)}")
+        print(f"Лист: {sheet_name}, стартовая ячейка: {start_cell}, режим: {mode}")
+        if rows[:3]:
+            print("Первые строки:")
+            for value_row in values[1:4]:
+                print(" | ".join(str(value) for value in value_row))
+
+    from app.clients.google_sheets import GoogleSheetsClient
+
+    client = GoogleSheetsClient(credentials_path=_resolve_project_path(config.google_application_credentials))
+    if dry_run:
+        start_column, end_column, _ = _target_columns(start_cell, len(API_ERP_TRU_SALES_EXPORT_HEADERS))
+        existing = client.get_values(
+            spreadsheet_id=target_spreadsheet_id,
+            sheet_name=sheet_name,
+            a1_range=f"{start_column}:{end_column}",
+        )
+        plan = plan_sheet_table_sync(
+            existing=existing,
+            start_cell=start_cell,
+            values=values,
+            mode=mode,
+            headers=API_ERP_TRU_SALES_EXPORT_HEADERS,
+            key_columns=1,
+            replace_on_order_change=True,
+        )
+        if verbose:
+            print(
+                "Dry-run план Google Sheets: "
+                f"существующих строк {plan.existing_rows}, "
+                f"без изменений {plan.unchanged_rows}, "
+                f"будет обновлено {plan.changed_rows}, "
+                f"будет добавлено {plan.appended_rows}, "
+                f"устаревших строк {plan.stale_rows}, "
+                f"очистка блока: {'да' if plan.cleared else 'нет'}, "
+                f"ожидаемо ячеек к изменению {plan.updated_cells}"
+            )
+            print("Dry-run: запись в Google Sheets не выполнялась")
+        return ApiErpTruSalesExportResult(
+            sheet_name=sheet_name,
+            start_cell=start_cell,
+            rows_count=len(rows),
+            sync=plan,
+            dry_run=True,
+        )
+
+    sync = sync_sheet_table(
+        client=client,
+        spreadsheet_id=target_spreadsheet_id,
+        sheet_name=sheet_name,
+        start_cell=start_cell,
+        values=values,
+        mode=mode,
+        headers=API_ERP_TRU_SALES_EXPORT_HEADERS,
+        key_columns=1,
+        replace_on_order_change=True,
+    )
+    if verbose:
+        if sync.cleared:
+            print(f"Google Sheets: диапазон перезаписан: {sync.updated_range}")
+        print(
+            "Google Sheets: "
+            f"существующих строк {sync.existing_rows}, "
+            f"без изменений {sync.unchanged_rows}, "
+            f"обновлено {sync.changed_rows}, "
+            f"добавлено {sync.appended_rows}, "
+            f"устаревших убрано {sync.stale_rows}, "
+            f"строк листа добавлено {sync.added_sheet_rows}, "
+            f"ячеек изменено {sync.updated_cells}"
+        )
+    return ApiErpTruSalesExportResult(
+        sheet_name=sheet_name,
+        start_cell=start_cell,
+        rows_count=len(rows),
+        sync=sync,
+        dry_run=False,
+    )
+
+
 def run_ozon_placement_to_sheets(
     *,
     spreadsheet_id: str | None = None,
@@ -928,6 +1072,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_sheet_args(ozon_placement, default_start_cell=DEFAULT_OZON_PLACEMENT_START_CELL, default_mode="replace")
 
+    api_erp_tru_sales = subparsers.add_parser(
+        "api-erp-tru-sales",
+        help="выгрузить ERP/TRU продажи в DATA",
+    )
+    _add_common_sheet_args(api_erp_tru_sales, default_start_cell=DEFAULT_API_ERP_TRU_SALES_START_CELL, default_mode="replace")
+
     return parser
 
 
@@ -950,6 +1100,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             return export_wb_orders_to_sheets(**common_kwargs)
     if args.command == "ozon-placement":
         return export_ozon_placement_to_sheets(
+            spreadsheet_id=args.spreadsheet_id,
+            sheet_name=args.sheet_name,
+            start_cell=args.start_cell,
+            limit=args.limit,
+            mode=args.mode,
+            dry_run=args.dry_run,
+        )
+    if args.command == "api-erp-tru-sales":
+        return export_api_erp_tru_sales_to_sheets(
             spreadsheet_id=args.spreadsheet_id,
             sheet_name=args.sheet_name,
             start_cell=args.start_cell,

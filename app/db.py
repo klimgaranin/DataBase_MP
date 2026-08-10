@@ -1263,6 +1263,85 @@ def insert_raw_api_responses(rows: list[dict[str, Any]]) -> int:
             return len(values)
 
 
+def replace_api_erp_tru_product_stats(
+    rows: list[dict[str, Any]],
+    *,
+    run_id: str,
+    period_from: Any,
+    period_to: Any,
+) -> tuple[int, int]:
+    """Сохраняет ERP/TRU raw snapshot и полностью заменяет текущую техническую таблицу."""
+    values = [
+        (
+            run_id,
+            period_from,
+            period_to,
+            r.get("external_id"),
+            r["article"],
+            r.get("series_name"),
+            r.get("brand_name"),
+            r.get("name_1s"),
+            r.get("barcode"),
+            r.get("remains_warehouse_count") or 0,
+            r.get("warehouse_count") or 0,
+            r.get("presence_count") or 0,
+            r.get("for_marketplaces_count") or 0,
+            r.get("reserved_total_count") or 0,
+            r.get("reserved_invoice_count") or 0,
+            r.get("reserved_cash_count") or 0,
+            r.get("avg_price"),
+            r.get("sales_count") or 0,
+            r.get("sales_sum") or 0,
+            json.dumps(r.get("payload", {}), ensure_ascii=False, default=str),
+        )
+        for r in rows
+        if r.get("article")
+    ]
+    with connect() as conn:
+        with conn.cursor() as cur:
+            if values:
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO raw.api_erp_tru_product_stat_rows
+                        (source_run_id, period_from, period_to, external_id, article,
+                         series_name, brand_name, name_1s, barcode,
+                         remains_warehouse_count, warehouse_count, presence_count,
+                         for_marketplaces_count, reserved_total_count, reserved_invoice_count,
+                         reserved_cash_count, avg_price, sales_count, sales_sum, payload)
+                    VALUES %s
+                    """,
+                    values,
+                    template=(
+                        "(%s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                        "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)"
+                    ),
+                    page_size=1000,
+                )
+
+            cur.execute("TRUNCATE staging.api_erp_tru_product_stats_current")
+            if values:
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO staging.api_erp_tru_product_stats_current
+                        (source_run_id, period_from, period_to, external_id, article,
+                         series_name, brand_name, name_1s, barcode,
+                         remains_warehouse_count, warehouse_count, presence_count,
+                         for_marketplaces_count, reserved_total_count, reserved_invoice_count,
+                         reserved_cash_count, avg_price, sales_count, sales_sum, payload)
+                    VALUES %s
+                    """,
+                    values,
+                    template=(
+                        "(%s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                        "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)"
+                    ),
+                    page_size=1000,
+                )
+            return len(values), len(values)
+
+
 def upsert_wb_order_feed_orders(
     rows: list[dict[str, Any]], *, run_id: str, force_history: bool = False
 ) -> int:
