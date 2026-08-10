@@ -48,7 +48,10 @@ def article(value: Any) -> str:
         return ""
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
-    return str(value).strip()
+    text = str(value).strip()
+    if text.isdigit():
+        return str(int(text))
+    return text
 
 
 def normalize_order_daily(row: dict[str, Any], *, source_system: str) -> dict[str, Any] | None:
@@ -100,11 +103,11 @@ def normalize_production_inventory(row: dict[str, Any]) -> dict[str, Any] | None
         return None
     return {
         "article": item_article,
-        "smp_qty": parse_int(row.get("СМП")),
-        "osn_qty": parse_int(row.get("ОСН")),
-        "soh_qty": parse_int(row.get("СОХ")),
-        "svh_qty": parse_int(row.get("СВХ")),
-        "ts_qty": parse_int(row.get("ТС")),
+        "smp_qty": parse_decimal(row.get("СМП")),
+        "osn_qty": parse_decimal(row.get("ОСН")),
+        "soh_qty": parse_decimal(row.get("СОХ")),
+        "svh_qty": parse_decimal(row.get("СВХ")),
+        "ts_qty": parse_decimal(row.get("ТС")),
         "payload": row,
     }
 

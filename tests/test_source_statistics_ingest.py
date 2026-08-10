@@ -69,8 +69,10 @@ class SourceStatisticsNormalizationTests(unittest.TestCase):
         self.assertEqual(normalized["daily_writeoff_rub"], 10.25)
 
     def test_normalize_internal_blocks(self) -> None:
-        inventory = normalize_production_inventory({"Артикул": "ART-1", "СМП": "1", "ОСН": "2", "СОХ": "3", "СВХ": "4", "ТС": "5"})
+        inventory = normalize_production_inventory({"Артикул": "021549", "СМП": "1", "ОСН": "2", "СОХ": "3,5", "СВХ": "4", "ТС": "5"})
         pipeline = normalize_supply_pipeline({"Артикул": "ART-1", "СОГЛ Заказа": "1", "В ПРОИЗВ": "2", "ГОТОВ": "3", "В ПУТИ": "4", "МИНСК": "01.07.2026"})
+        self.assertEqual(inventory["article"], "21549")
+        self.assertEqual(inventory["soh_qty"], 3.5)
         self.assertEqual(inventory["ts_qty"], 5)
         self.assertEqual(pipeline["minsk_date"].isoformat(), "2026-07-01")
         self.assertEqual(pipeline["ready_qty"], 3)

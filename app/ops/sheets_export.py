@@ -55,11 +55,11 @@ class ApiErpTruSalesSheetRow:
 @dataclass(frozen=True)
 class SourceProductionInventorySheetRow:
     article: str
-    smp_qty: int
-    osn_qty: int
-    soh_qty: int
-    svh_qty: int
-    ts_qty: int
+    smp_qty: Decimal
+    osn_qty: Decimal
+    soh_qty: Decimal
+    svh_qty: Decimal
+    ts_qty: Decimal
 
 
 @dataclass(frozen=True)
@@ -227,18 +227,23 @@ def build_source_production_inventory_sheet_values(rows: Sequence[SourceProducti
         values.append(
             [
                 row.article,
-                _blank_zero(row.smp_qty),
-                _blank_zero(row.osn_qty),
-                _blank_zero(row.soh_qty),
-                _blank_zero(row.svh_qty),
-                _blank_zero(row.ts_qty),
+                _quantity_to_sheet_value(row.smp_qty),
+                _quantity_to_sheet_value(row.osn_qty),
+                _quantity_to_sheet_value(row.soh_qty),
+                _quantity_to_sheet_value(row.svh_qty),
+                _quantity_to_sheet_value(row.ts_qty),
             ]
         )
     return values
 
 
-def _blank_zero(value: int) -> int | str:
-    return "" if int(value or 0) == 0 else int(value)
+def _quantity_to_sheet_value(value: Decimal) -> int | float | str:
+    amount = Decimal(value or 0).quantize(Decimal("0.001"))
+    if amount == 0:
+        return ""
+    if amount == amount.to_integral_value():
+        return int(amount)
+    return float(amount.normalize())
 
 
 def build_source_supply_pipeline_sheet_values(rows: Sequence[SourceSupplyPipelineSheetRow]) -> list[list[Any]]:
@@ -290,11 +295,11 @@ def _source_block_number_formats(block: Literal["production-inventory", "supply-
     if block == "production-inventory":
         return [
             {"type": "TEXT"},
-            {"type": "NUMBER", "pattern": "0"},
-            {"type": "NUMBER", "pattern": "0"},
-            {"type": "NUMBER", "pattern": "0"},
-            {"type": "NUMBER", "pattern": "0"},
-            {"type": "NUMBER", "pattern": "0"},
+            {"type": "NUMBER", "pattern": "0.###"},
+            {"type": "NUMBER", "pattern": "0.###"},
+            {"type": "NUMBER", "pattern": "0.###"},
+            {"type": "NUMBER", "pattern": "0.###"},
+            {"type": "NUMBER", "pattern": "0.###"},
         ]
     return [
         {"type": "TEXT"},
@@ -766,11 +771,11 @@ def fetch_source_production_inventory_sheet_rows(*, limit: int | None = None) ->
             return [
                 SourceProductionInventorySheetRow(
                     article=str(article or ""),
-                    smp_qty=int(smp_qty or 0),
-                    osn_qty=int(osn_qty or 0),
-                    soh_qty=int(soh_qty or 0),
-                    svh_qty=int(svh_qty or 0),
-                    ts_qty=int(ts_qty or 0),
+                    smp_qty=Decimal(smp_qty or 0),
+                    osn_qty=Decimal(osn_qty or 0),
+                    soh_qty=Decimal(soh_qty or 0),
+                    svh_qty=Decimal(svh_qty or 0),
+                    ts_qty=Decimal(ts_qty or 0),
                 )
                 for article, smp_qty, osn_qty, soh_qty, svh_qty, ts_qty in cur.fetchall()
             ]

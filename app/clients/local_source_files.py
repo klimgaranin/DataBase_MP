@@ -190,7 +190,10 @@ def _clean_article(value: Any) -> str:
         return ""
     if isinstance(value, float) and value.is_integer():
         return str(int(value))
-    return str(value).strip()
+    text = str(value).strip()
+    if text.isdigit():
+        return str(int(text))
+    return text
 
 
 def _parse_ru_number(value: Any) -> float:

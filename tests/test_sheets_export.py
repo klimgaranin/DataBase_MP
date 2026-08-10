@@ -123,7 +123,7 @@ class SheetsExportTests(unittest.TestCase):
                 article="10031",
                 smp_qty=198,
                 osn_qty=4380,
-                soh_qty=0,
+                soh_qty=Decimal("6.7"),
                 svh_qty=0,
                 ts_qty=0,
             )
@@ -144,7 +144,7 @@ class SheetsExportTests(unittest.TestCase):
             [
                 ["Артикул", "СМП", "ОСН", "СОХ", "СВХ", "ТС"],
                 ["21045", 1, 2, 3, 4, 5],
-                ["10031", 198, 4380, "", "", ""],
+                ["10031", 198, 4380, 6.7, "", ""],
             ],
         )
         self.assertEqual(
