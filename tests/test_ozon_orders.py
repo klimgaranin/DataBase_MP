@@ -206,7 +206,10 @@ class OzonClientTests(unittest.TestCase):
 class OzonOrdersDbHistoryTests(unittest.TestCase):
     def test_raw_versions_are_inserted_only_on_payload_change(self) -> None:
         kwargs = db._get_connection_kwargs()
-        shared_conn = psycopg2.connect(kwargs) if isinstance(kwargs, str) else psycopg2.connect(**kwargs)
+        try:
+            shared_conn = psycopg2.connect(kwargs) if isinstance(kwargs, str) else psycopg2.connect(**kwargs)
+        except psycopg2.OperationalError as exc:
+            self.skipTest(f"PostgreSQL is not available for DB history test: {exc}")
         old_connect = db.connect
 
         @contextmanager

@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import json
 import unittest
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
+import psycopg2
+
+import app.db as db
 from app.clients.http_wb_order_feed import WbOrderFeedClient, iter_order_feed
 from app.jobs.job_wb_order_feed import _dedupe_by_srid, _period
 from app.normalize.norm_wb_order_feed import normalize_wb_order_feed_order
@@ -114,6 +118,53 @@ class WbOrderFeedDedupeTests(unittest.TestCase):
         self.assertEqual(duplicates, 1)
         self.assertEqual(len(unique), 2)
         self.assertEqual(next(item for item in unique if item["srid"] == "one")["status"], "buyout")
+
+
+class WbOrderFeedDbHistoryTests(unittest.TestCase):
+    def test_history_accepts_return_to_previous_payload(self) -> None:
+        kwargs = db._get_connection_kwargs()
+        try:
+            shared_conn = psycopg2.connect(kwargs) if isinstance(kwargs, str) else psycopg2.connect(**kwargs)
+        except psycopg2.OperationalError as exc:
+            self.skipTest(f"PostgreSQL is not available for DB history test: {exc}")
+        old_connect = db.connect
+
+        @contextmanager
+        def shared_rollback_connect():
+            yield shared_conn
+
+        db.connect = shared_rollback_connect
+        try:
+            created_at = datetime(2026, 8, 1, 10, 0, tzinfo=timezone.utc)
+            srid = "TEST-WB-FEED-HISTORY-RETURN"
+            base = {
+                "srid": srid,
+                "nm_id": 1001,
+                "chrt_id": 2002,
+                "created_at": created_at,
+                "status_updated_at": created_at,
+                "status": "created",
+                "cancel_type": None,
+                "payload": {"srid": srid, "status": "created", "updatedAt": created_at.isoformat()},
+            }
+            changed = {
+                **base,
+                "status_updated_at": created_at + timedelta(hours=1),
+                "status": "buyout",
+                "payload": {
+                    "srid": srid,
+                    "status": "buyout",
+                    "updatedAt": (created_at + timedelta(hours=1)).isoformat(),
+                },
+            }
+
+            self.assertEqual(db.upsert_wb_order_feed_orders([base], run_id="test-wb-feed-run-1"), 1)
+            self.assertEqual(db.upsert_wb_order_feed_orders([changed], run_id="test-wb-feed-run-2"), 1)
+            self.assertEqual(db.upsert_wb_order_feed_orders([base], run_id="test-wb-feed-run-3"), 1)
+            self.assertEqual(db.upsert_wb_order_feed_orders([base], run_id="test-wb-feed-run-4"), 0)
+        finally:
+            db.connect = old_connect
+            shared_conn.rollback()
 
 
 if __name__ == "__main__":

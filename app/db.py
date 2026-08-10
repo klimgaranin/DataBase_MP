@@ -1321,6 +1321,7 @@ def upsert_wb_order_feed_orders(
                     SELECT srid, payload_sha256, nm_id, chrt_id, created_at, status_updated_at,
                            status, cancel_type, payload, source_run_id
                     FROM changed
+                    ON CONFLICT (srid, payload_sha256, source_run_id) DO NOTHING
                     RETURNING 1
                 ),
                 current_upsert AS (
