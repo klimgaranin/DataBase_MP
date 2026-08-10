@@ -8,6 +8,7 @@ from typing import Any
 
 DEFAULT_BITWARDEN_FOLDER = "DataBase_MP"
 DEFAULT_ITEM_PREFIX = "DataBase_MP / "
+SECRET_FIELD_NAMES = {"token", "value", "password", "secret", "api_key", "api-key", "api key"}
 
 
 @dataclass(frozen=True)
@@ -82,14 +83,37 @@ def extract_item_secret(item: dict[str, Any], *, prefix: str = DEFAULT_ITEM_PREF
     if not secret_name:
         return None
 
-    login = item.get("login")
-    if not isinstance(login, dict):
-        return None
-    value = login.get("password")
-    if not isinstance(value, str) or not value:
+    value = _extract_secret_value(item, secret_name)
+    if not value:
         return None
 
     return BitwardenItemSecret(name=secret_name, value=value)
+
+
+def _extract_secret_value(item: dict[str, Any], secret_name: str) -> str | None:
+    login = item.get("login")
+    if isinstance(login, dict):
+        value = login.get("password")
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    fields = item.get("fields")
+    if isinstance(fields, list):
+        expected_names = {secret_name.lower(), *SECRET_FIELD_NAMES}
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            field_name = str(field.get("name") or "").strip().lower()
+            value = field.get("value")
+            if field_name in expected_names and isinstance(value, str) and value.strip():
+                return value.strip()
+
+    notes = item.get("notes")
+    if isinstance(notes, str):
+        value = notes.strip()
+        if value and "\n" not in value and "\r" not in value:
+            return value
+    return None
 
 
 def list_folder_items(folder_id: str) -> list[dict[str, Any]]:

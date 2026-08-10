@@ -38,6 +38,32 @@ class BitwardenOpsTests(unittest.TestCase):
             )
         )
 
+    def test_extract_item_secret_reads_secret_named_custom_field(self) -> None:
+        secret = extract_item_secret(
+            {
+                "name": "DataBase_MP / API_ERP_TRU_TOKEN",
+                "login": {"password": ""},
+                "fields": [{"name": "API_ERP_TRU_TOKEN", "value": "secret-value"}],
+            }
+        )
+
+        self.assertIsNotNone(secret)
+        self.assertEqual(secret.name, "API_ERP_TRU_TOKEN")
+        self.assertEqual(secret.value, "secret-value")
+
+    def test_extract_item_secret_reads_single_line_notes(self) -> None:
+        secret = extract_item_secret(
+            {
+                "name": "DataBase_MP / API_ERP_TRU_TOKEN",
+                "login": {"password": ""},
+                "notes": "secret-value",
+            }
+        )
+
+        self.assertIsNotNone(secret)
+        self.assertEqual(secret.name, "API_ERP_TRU_TOKEN")
+        self.assertEqual(secret.value, "secret-value")
+
 
 if __name__ == "__main__":
     unittest.main()
