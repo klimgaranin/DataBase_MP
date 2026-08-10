@@ -286,6 +286,40 @@ def _target_columns(start_cell: str, width: int) -> tuple[str, str, int]:
     return start_column, end_column, start_row
 
 
+def _source_block_number_formats(block: Literal["production-inventory", "supply-pipeline"]) -> list[dict[str, str]]:
+    if block == "production-inventory":
+        return [
+            {"type": "TEXT"},
+            {"type": "NUMBER", "pattern": "0"},
+            {"type": "NUMBER", "pattern": "0"},
+            {"type": "NUMBER", "pattern": "0"},
+            {"type": "NUMBER", "pattern": "0"},
+            {"type": "NUMBER", "pattern": "0"},
+        ]
+    return [
+        {"type": "TEXT"},
+        {"type": "NUMBER", "pattern": "0"},
+        {"type": "NUMBER", "pattern": "0"},
+        {"type": "NUMBER", "pattern": "0"},
+        {"type": "NUMBER", "pattern": "0"},
+        {"type": "DATE", "pattern": "dd.mm.yyyy"},
+    ]
+
+
+def _apply_source_block_formats(*, client: Any, spreadsheet_id: str, sheet_name: str, start_cell: str, block: Literal["production-inventory", "supply-pipeline"]) -> None:
+    format_columns = getattr(client, "set_column_number_formats", None)
+    if not callable(format_columns):
+        return
+    start_column, _, start_row = _target_columns(start_cell, len(_source_block_number_formats(block)))
+    format_columns(
+        spreadsheet_id=spreadsheet_id,
+        sheet_name=sheet_name,
+        start_column_index=_column_to_number(start_column) - 1,
+        start_row_index=start_row - 1,
+        number_formats=_source_block_number_formats(block),
+    )
+
+
 def _ensure_sheet_has_rows(
     *,
     client: Any,
@@ -1039,6 +1073,13 @@ def run_source_block_to_sheets(
             dry_run=True,
         )
 
+    _apply_source_block_formats(
+        client=client,
+        spreadsheet_id=target_spreadsheet_id,
+        sheet_name=sheet_name,
+        start_cell=target_start_cell,
+        block=block,
+    )
     sync = sync_sheet_table(
         client=client,
         spreadsheet_id=target_spreadsheet_id,

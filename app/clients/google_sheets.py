@@ -112,6 +112,62 @@ class GoogleSheetsClient:
 
         raise RuntimeError(f"Лист Google Sheets не найден: {sheet_name}")
 
+    def set_column_number_formats(
+        self,
+        *,
+        spreadsheet_id: str,
+        sheet_name: str,
+        start_column_index: int,
+        start_row_index: int,
+        number_formats: list[dict[str, str]],
+    ) -> dict[str, Any]:
+        if not number_formats:
+            return {}
+
+        metadata = (
+            self._service.spreadsheets()
+            .get(
+                spreadsheetId=spreadsheet_id,
+                fields="sheets(properties(sheetId,title))",
+            )
+            .execute()
+        )
+        sheet_id: int | None = None
+        for sheet in metadata.get("sheets", []):
+            properties = sheet.get("properties", {})
+            if properties.get("title") == sheet_name:
+                sheet_id = int(properties["sheetId"])
+                break
+        if sheet_id is None:
+            raise RuntimeError(f"Лист Google Sheets не найден: {sheet_name}")
+
+        requests = []
+        for offset, number_format in enumerate(number_formats):
+            requests.append(
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": start_row_index,
+                            "startColumnIndex": start_column_index + offset,
+                            "endColumnIndex": start_column_index + offset + 1,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": number_format,
+                            }
+                        },
+                        "fields": "userEnteredFormat.numberFormat",
+                    }
+                }
+            )
+
+        return (
+            self._service.spreadsheets()
+            .batchUpdate(spreadsheetId=spreadsheet_id, body={"requests": requests})
+            .execute()
+        )
+
     def batch_update_values(
         self,
         *,
