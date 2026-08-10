@@ -224,8 +224,21 @@ def build_api_erp_tru_sales_sheet_values(rows: Sequence[ApiErpTruSalesSheetRow])
 def build_source_production_inventory_sheet_values(rows: Sequence[SourceProductionInventorySheetRow]) -> list[list[Any]]:
     values: list[list[Any]] = [SOURCE_PRODUCTION_INVENTORY_EXPORT_HEADERS]
     for row in rows:
-        values.append([row.article, row.smp_qty, row.osn_qty, row.soh_qty, row.svh_qty, row.ts_qty])
+        values.append(
+            [
+                row.article,
+                _blank_zero(row.smp_qty),
+                _blank_zero(row.osn_qty),
+                _blank_zero(row.soh_qty),
+                _blank_zero(row.svh_qty),
+                _blank_zero(row.ts_qty),
+            ]
+        )
     return values
+
+
+def _blank_zero(value: int) -> int | str:
+    return "" if int(value or 0) == 0 else int(value)
 
 
 def build_source_supply_pipeline_sheet_values(rows: Sequence[SourceSupplyPipelineSheetRow]) -> list[list[Any]]:

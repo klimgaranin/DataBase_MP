@@ -414,11 +414,10 @@ snapshot, staging-таблицы, `job_runs`, лог и Telegram-алерт.
 
 Файловые источники на Windows-сервере:
 
-- список заказов: `\\tsclient\P\Список заказов`;
-- остатки 1С: `\\tsclient\S\МП`.
+- список заказов: `\\tsclient\P\Список заказов\Список заказов VED.xlsx`;
+- остатки 1С: `\\tsclient\S\МП\Остатки МП.txt`.
 
-Если Windows-пути доступны, job берёт самые свежие файлы напрямую:
-список заказов из `.xlsx`, остатки 1С из `.txt` или `.xls`.
+Если Windows-пути доступны, job берёт эти файлы напрямую.
 Если путь недоступен, остаётся fallback на материализованные таблицы
 `Статистика.xlsm`.
 
@@ -764,8 +763,8 @@ Credential Manager через `keyring`.
 | `SOURCE_STATISTICS_LOG_FILE`   | ❌           | —            | Файл лога source statistics job        |
 | `SOURCE_STATISTICS_DRY_RUN`    | ❌           | `0`          | Проверка без записи в БД               |
 | `SOURCE_STATISTICS_INCLUDE_WB_TABLES` | ❌    | `0`          | Читать WB-блоки из Excel; обычно не нужно |
-| `SOURCE_STATISTICS_ORDERS_LIST_PATH` | ❌     | `\\tsclient\P\Список заказов` | Папка/файл списка заказов на Windows-сервере |
-| `SOURCE_STATISTICS_1C_STOCKS_PATH` | ❌        | `\\tsclient\S\МП` | Папка/файл остатков 1С на Windows-сервере |
+| `SOURCE_STATISTICS_ORDERS_LIST_PATH` | ❌     | `\\tsclient\P\Список заказов\Список заказов VED.xlsx` | Файл списка заказов на Windows-сервере |
+| `SOURCE_STATISTICS_1C_STOCKS_PATH` | ❌        | `\\tsclient\S\МП\Остатки МП.txt` | Файл остатков 1С на Windows-сервере |
 | `SOURCE_STATISTICS_SKIP_UNCHANGED` | ❌       | `1`          | Не обновлять БД, если прямые файлы не изменились |
 
 ### Секреты через Windows Credential Manager

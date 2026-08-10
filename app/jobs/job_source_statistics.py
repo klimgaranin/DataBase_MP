@@ -81,8 +81,8 @@ def _load_job_config() -> dict[str, object]:
     include_wb_tables = (os.getenv("SOURCE_STATISTICS_INCLUDE_WB_TABLES", "0").strip().lower() in {"1", "true", "yes"})
     dry_run = os.getenv("SOURCE_STATISTICS_DRY_RUN", "0").strip().lower() in {"1", "true", "yes"}
     log_file = (os.getenv("SOURCE_STATISTICS_LOG_FILE") or "").strip() or None
-    orders_list_path = os.getenv("SOURCE_STATISTICS_ORDERS_LIST_PATH", r"\\tsclient\P\Список заказов").strip()
-    stocks_1c_path = os.getenv("SOURCE_STATISTICS_1C_STOCKS_PATH", r"\\tsclient\S\МП").strip()
+    orders_list_path = os.getenv("SOURCE_STATISTICS_ORDERS_LIST_PATH", r"\\tsclient\P\Список заказов\Список заказов VED.xlsx").strip()
+    stocks_1c_path = os.getenv("SOURCE_STATISTICS_1C_STOCKS_PATH", r"\\tsclient\S\МП\Остатки МП.txt").strip()
     skip_unchanged = os.getenv("SOURCE_STATISTICS_SKIP_UNCHANGED", "1").strip().lower() in {"1", "true", "yes", "да"}
     no_changes_exit_code = int(os.getenv("SOURCE_STATISTICS_NO_CHANGES_EXIT_CODE", "0") or "0")
     return {

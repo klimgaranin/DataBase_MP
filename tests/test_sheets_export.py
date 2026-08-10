@@ -118,6 +118,14 @@ class SheetsExportTests(unittest.TestCase):
                 soh_qty=3,
                 svh_qty=4,
                 ts_qty=5,
+            ),
+            SourceProductionInventorySheetRow(
+                article="10031",
+                smp_qty=198,
+                osn_qty=4380,
+                soh_qty=0,
+                svh_qty=0,
+                ts_qty=0,
             )
         ]
         pipeline_rows = [
@@ -133,7 +141,11 @@ class SheetsExportTests(unittest.TestCase):
 
         self.assertEqual(
             build_source_production_inventory_sheet_values(inventory_rows),
-            [["Артикул", "СМП", "ОСН", "СОХ", "СВХ", "ТС"], ["21045", 1, 2, 3, 4, 5]],
+            [
+                ["Артикул", "СМП", "ОСН", "СОХ", "СВХ", "ТС"],
+                ["21045", 1, 2, 3, 4, 5],
+                ["10031", 198, 4380, "", "", ""],
+            ],
         )
         self.assertEqual(
             build_source_supply_pipeline_sheet_values(pipeline_rows),
