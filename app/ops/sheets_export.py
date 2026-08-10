@@ -295,11 +295,11 @@ def _source_block_number_formats(block: Literal["production-inventory", "supply-
     if block == "production-inventory":
         return [
             {"type": "TEXT"},
-            {"type": "NUMBER", "pattern": "0.###"},
-            {"type": "NUMBER", "pattern": "0.###"},
-            {"type": "NUMBER", "pattern": "0.###"},
-            {"type": "NUMBER", "pattern": "0.###"},
-            {"type": "NUMBER", "pattern": "0.###"},
+            {"type": "NUMBER", "pattern": "0,###"},
+            {"type": "NUMBER", "pattern": "0,###"},
+            {"type": "NUMBER", "pattern": "0,###"},
+            {"type": "NUMBER", "pattern": "0,###"},
+            {"type": "NUMBER", "pattern": "0,###"},
         ]
     return [
         {"type": "TEXT"},
