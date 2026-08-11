@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_COST_FILE_PATH = r"\\tsclient\S\МП\СС_общий.txt"
+DEFAULT_COST_FILE_PATH = r"\\tsclient\S\МП\Остатки МП.txt"
 
 
 def read_source_cost_file(path: str | Path) -> dict[str, Any]:

@@ -6,7 +6,7 @@ set ROOT=%~dp0..
 set VENV=%ROOT%\.venv\Scripts\python.exe
 set SOURCE_JOB=%ROOT%\app\jobs\job_source_costs.py
 set SHEETS_JOB=%ROOT%\app\jobs\job_sheets_source_costs_export.py
-set SOURCE_COSTS_FILE_PATH=\\tsclient\S\МП\СС_общий.txt
+set SOURCE_COSTS_FILE_PATH=\\tsclient\S\МП\Остатки МП.txt
 if not exist "%ROOT%\logs" mkdir "%ROOT%\logs"
 
 set SOURCE_COSTS_NO_CHANGES_EXIT_CODE=3

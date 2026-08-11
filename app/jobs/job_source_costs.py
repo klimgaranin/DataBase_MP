@@ -1,5 +1,5 @@
 """
-Джоб: себестоимость 1С из файла СС_общий.txt.
+Джоб: себестоимость 1С из расширенного файла Остатки МП.txt.
 """
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ JOB_NAME = "source_costs"
 ALERT_NAME = "Source_Costs"
 LOCK_ID = 4_242_401
 PROJECT_ROOT = _THIS.parent.parent.parent
-SOURCE_NAME = "СС_общий"
+SOURCE_NAME = "Остатки МП"
 TABLE_NAME = "source_cost_by_warehouse"
 
 
@@ -100,6 +100,10 @@ def main() -> int:
 
         parsed = read_source_cost_file(path)
         raw_rows = parsed["warehouse_rows"]
+        if not raw_rows:
+            no_changes = True
+            log.warning("Себестоимость 1С: файл не похож на расширенный отчёт с себестоимостью, БД и Sheets не трогаем: %s", path)
+            return int(cfg.get("no_changes_exit_code") or 0)
         normalized_raw = [
             row
             for source_row in raw_rows

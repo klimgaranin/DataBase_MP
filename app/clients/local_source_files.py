@@ -93,6 +93,9 @@ def read_supply_pipeline_rows(path: str | Path) -> list[dict[str, Any]]:
 def read_production_inventory_rows(path: str | Path) -> list[dict[str, Any]]:
     source = Path(path)
     if source.suffix.lower() == ".txt":
+        source_cost_rows = _read_production_inventory_from_source_cost_file(source)
+        if source_cost_rows:
+            return source_cost_rows
         return _read_production_inventory_txt(source)
     rows = read_local_table_rows(source)
     return _transform_production_inventory_rows(rows, remove_last=False)
@@ -148,6 +151,43 @@ def _transform_production_inventory_rows(rows: list[dict[str, Any]], *, remove_l
         for col in ("СМП", "ОСН", "СОХ", "СВХ", "ТС"):
             target[col] += normalized[col]
     return list(grouped.values())
+
+
+def _read_production_inventory_from_source_cost_file(path: Path) -> list[dict[str, Any]]:
+    try:
+        from app.clients.local_source_cost_file import read_source_cost_file
+        from app.normalize.norm_source_costs import aggregate_source_cost_rows, normalize_source_cost_row
+    except ImportError:
+        return []
+
+    try:
+        parsed = read_source_cost_file(path)
+    except Exception:
+        return []
+
+    warehouse_to_column = {
+        "ДЛЯ МАРКЕТПЛЕЙСОВ": "СМП",
+        "основной": "ОСН",
+        "Ответственное хранение Великий камень": "СОХ",
+        "Склад СВХ Великий камень": "СВХ",
+        "Таможенный склад (Великий камень)": "ТС",
+    }
+    normalized = [
+        row
+        for source_row in parsed.get("warehouse_rows", [])
+        for row in [normalize_source_cost_row(source_row)]
+        if row is not None and row.get("warehouse_name") in warehouse_to_column
+    ]
+    grouped_costs = aggregate_source_cost_rows(normalized)
+    rows_by_article: dict[str, dict[str, Any]] = {}
+    for source_row in grouped_costs:
+        article = str(source_row.get("article") or "")
+        target_col = warehouse_to_column.get(str(source_row.get("warehouse_name") or ""))
+        if not article or not target_col:
+            continue
+        row = rows_by_article.setdefault(article, {"Артикул": article, "СМП": 0, "ОСН": 0, "СОХ": 0, "СВХ": 0, "ТС": 0})
+        row[target_col] = _parse_ru_number(source_row.get("quantity"))
+    return list(rows_by_article.values())
 
 
 def read_xls_rows(path: str | Path) -> list[dict[str, Any]]:

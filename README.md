@@ -417,6 +417,10 @@ snapshot, staging-таблицы, `job_runs`, лог и Telegram-алерт.
 - список заказов: `\\tsclient\P\Список заказов\Список заказов VED.xlsx`;
 - остатки 1С: `\\tsclient\S\МП\Остатки МП.txt`.
 
+Файл остатков может быть расширенным отчётом 1С с себестоимостью. В этом случае
+job берёт из него количества по складам `СМП`, `ОСН`, `СОХ`, `СВХ`, `ТС` и
+выгружает остатки в `DATA!Q:V` как раньше.
+
 Если Windows-пути доступны, job берёт эти файлы напрямую.
 Если путь недоступен, остаётся fallback на материализованные таблицы
 `Статистика.xlsm`.
@@ -468,7 +472,7 @@ powershell -ExecutionPolicy Bypass -File scripts\register_source_files_refresh_t
 
 Источник:
 
-- `\\tsclient\S\МП\СС_общий.txt`.
+- `\\tsclient\S\МП\Остатки МП.txt`.
 
 Файл имеет двухуровневую шапку: склад, а под ним `Кол-во`,
 `Себест. единицы`, `Себестоимость`. Job разворачивает это в техническую
@@ -797,7 +801,7 @@ Credential Manager через `keyring`.
 | `SHEETS_SOURCE_FILES_EXPORT_LOG_FILE` | ❌   | `logs/job_sheets_source_files_export.log` | Файл лога выгрузки файловых блоков в Google Sheets |
 | `SHEETS_SOURCE_FILES_EXPORT_MODE` | ❌       | `replace`    | Режим обновления блоков `DATA!Q:V` и `DATA!X:AC` |
 | `SHEETS_SOURCE_FILES_EXPORT_DRY_RUN` | ❌    | `0`          | Проверить Sheets job без записи       |
-| `SOURCE_COSTS_FILE_PATH`       | ❌           | `\\tsclient\S\МП\СС_общий.txt` | Файл себестоимости 1С |
+| `SOURCE_COSTS_FILE_PATH`       | ❌           | `\\tsclient\S\МП\Остатки МП.txt` | Расширенный файл остатков/себестоимости 1С |
 | `SOURCE_COSTS_LOG_FILE`        | ❌           | `logs/job_source_costs.log` | Файл лога source costs job |
 | `SOURCE_COSTS_DRY_RUN`         | ❌           | `0`          | Проверка себестоимости без записи в БД |
 | `SOURCE_COSTS_SKIP_UNCHANGED`  | ❌           | `1`          | Не обновлять БД, если файл себестоимости не изменился |

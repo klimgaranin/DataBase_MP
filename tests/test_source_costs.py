@@ -6,6 +6,7 @@ import csv
 from decimal import Decimal
 from pathlib import Path
 
+from app.clients.local_source_files import read_production_inventory_rows
 from app.clients.local_source_cost_file import read_source_cost_file
 from app.normalize.norm_source_costs import aggregate_source_cost_rows, normalize_source_cost_row
 from app.ops.sheets_export import SourceMarketplaceCostSheetRow, build_source_marketplace_cost_sheet_values
@@ -96,6 +97,62 @@ class SourceCostsTests(unittest.TestCase):
         self.assertEqual(grouped[0]["total_cost_byn"], Decimal("56"))
         self.assertEqual(grouped[0]["unit_cost_byn"], Decimal("11.2"))
         self.assertEqual(len(grouped[0]["payload"]["rows"]), 2)
+
+    def test_read_production_inventory_rows_from_source_cost_report(self) -> None:
+        rows = [
+            ["", "Остатки"],
+            ["По всем товарам"],
+            ["По всем складам"],
+            [
+                "Код",
+                "Товар/Склад",
+                "Артикул",
+                "Код ТН ВЭД",
+                "Количество",
+                "Себестоимость\nединицы",
+                "Себестоимость",
+                "ДЛЯ МАРКЕТПЛЕЙСОВ",
+                "",
+                "",
+                "основной",
+                "",
+                "",
+                "Ответственное хранение Великий камень",
+                "",
+                "",
+            ],
+            [
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "Кол-во",
+                "Себест.\nединицы",
+                "Себестоимость",
+                "Кол-во",
+                "Себест.\nединицы",
+                "Себестоимость",
+                "Кол-во",
+                "Себест.\nединицы",
+                "Себестоимость",
+            ],
+            ["0001", "Товар", "0010031", "", "6.000", "1.23", "7.38", "1.500", "1.10", "1.65", "2.250", "1.20", "2.70", "3.750", "1.30", "4.875"],
+        ]
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            path = Path(tmp) / "Остатки МП.txt"
+            with path.open("w", encoding="cp1251", newline="") as fh:
+                writer = csv.writer(fh, delimiter="\t")
+                writer.writerows(rows)
+
+            inventory = read_production_inventory_rows(path)
+
+        self.assertEqual(
+            inventory,
+            [{"Артикул": "10031", "СМП": 1.5, "ОСН": 2.25, "СОХ": 3.75, "СВХ": 0, "ТС": 0}],
+        )
 
 
 if __name__ == "__main__":
