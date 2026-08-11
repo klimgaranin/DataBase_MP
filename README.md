@@ -464,6 +464,38 @@ powershell -ExecutionPolicy Bypass -File scripts\register_source_files_refresh_t
 .\.venv\Scripts\python.exe -m app.cli sheets source-supply-pipeline
 ```
 
+### Себестоимость 1С
+
+Источник:
+
+- `\\tsclient\S\МП\СС_общий.txt`.
+
+Файл имеет двухуровневую шапку: склад, а под ним `Кол-во`,
+`Себест. единицы`, `Себестоимость`. Job разворачивает это в техническую
+таблицу `артикул / склад / кол-во / себестоимость`.
+
+В БД current-слой заменяется целиком при каждом изменении файла, накопление не
+ведётся. Raw-снимок файла сохраняется в `raw.source_file_snapshots`.
+
+Назначение Google Sheets:
+
+- spreadsheet `1vFXRJTGkfW1_NSWzThDYLGKpSOMUCTnZGEc6P8BZ4dg`;
+- Ozon себестоимость: `DATA!AX:AY`;
+- WB себестоимость: `DATA!BB:BC`;
+- колонки `AZ` и `BD` не трогаются, там остаются формулы пересчёта BYN в RUB.
+
+Боевой запуск:
+
+```powershell
+scripts\run_source_costs_refresh.cmd
+```
+
+Регистрация проверки каждую 1 минуту:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\register_source_costs_refresh_task.ps1
+```
+
 Новые таблицы:
 
 - `raw.source_file_snapshots` — полный слепок прочитанных Excel/file blocks.
@@ -475,6 +507,8 @@ powershell -ExecutionPolicy Bypass -File scripts\register_source_files_refresh_t
   заменяется API job `ozon_placement`.
 - `core.production_inventory_snapshot` — внутренние остатки из 1С-блока.
 - `staging.supply_pipeline_current` — список заказов в производстве/пути.
+- `staging.source_cost_by_warehouse_current` — текущая себестоимость 1С по
+  складам.
 
 ### Ozon API jobs
 
@@ -757,6 +791,14 @@ Credential Manager через `keyring`.
 | `SHEETS_SOURCE_FILES_EXPORT_LOG_FILE` | ❌   | `logs/job_sheets_source_files_export.log` | Файл лога выгрузки файловых блоков в Google Sheets |
 | `SHEETS_SOURCE_FILES_EXPORT_MODE` | ❌       | `replace`    | Режим обновления блоков `DATA!Q:V` и `DATA!X:AC` |
 | `SHEETS_SOURCE_FILES_EXPORT_DRY_RUN` | ❌    | `0`          | Проверить Sheets job без записи       |
+| `SOURCE_COSTS_FILE_PATH`       | ❌           | `\\tsclient\S\МП\СС_общий.txt` | Файл себестоимости 1С |
+| `SOURCE_COSTS_LOG_FILE`        | ❌           | `logs/job_source_costs.log` | Файл лога source costs job |
+| `SOURCE_COSTS_DRY_RUN`         | ❌           | `0`          | Проверка себестоимости без записи в БД |
+| `SOURCE_COSTS_SKIP_UNCHANGED`  | ❌           | `1`          | Не обновлять БД, если файл себестоимости не изменился |
+| `SHEETS_SOURCE_COSTS_SPREADSHEET_ID` | ❌    | `1vFXRJTGkfW1_NSWzThDYLGKpSOMUCTnZGEc6P8BZ4dg` | Таблица для себестоимости WB/Ozon |
+| `SHEETS_SOURCE_COSTS_EXPORT_LOG_FILE` | ❌   | `logs/job_sheets_source_costs_export.log` | Файл лога выгрузки себестоимости |
+| `SHEETS_SOURCE_COSTS_EXPORT_MODE` | ❌      | `replace`    | Режим обновления блоков `DATA!AX:AY` и `DATA!BB:BC` |
+| `SHEETS_SOURCE_COSTS_EXPORT_DRY_RUN` | ❌   | `0`          | Проверить Sheets job без записи       |
 | `OZON_STOCKS_LOG_FILE`         | ❌           | —            | Файл лога Ozon stocks job             |
 | `OZON_STOCKS_DRY_RUN`          | ❌           | `0`          | Проверить stocks без API/БД           |
 | `SOURCE_STATISTICS_FILE`       | ❌           | `local/source_exports/Статистика.xlsm` | Файл источника статистики |

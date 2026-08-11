@@ -151,6 +151,28 @@ def build_parser() -> argparse.ArgumentParser:
     sheets_source_pipeline.add_argument("--mode", choices=("upsert", "replace"), default="replace")
     sheets_source_pipeline.add_argument("--dry-run", action="store_true")
 
+    sheets_source_cost_ozon = sheets_subparsers.add_parser(
+        "source-cost-ozon",
+        help="выгрузить себестоимость Ozon из 1С в DATA",
+    )
+    sheets_source_cost_ozon.add_argument("--spreadsheet-id")
+    sheets_source_cost_ozon.add_argument("--sheet-name", default="DATA")
+    sheets_source_cost_ozon.add_argument("--start-cell", default="AX1")
+    sheets_source_cost_ozon.add_argument("--limit", type=int)
+    sheets_source_cost_ozon.add_argument("--mode", choices=("upsert", "replace"), default="replace")
+    sheets_source_cost_ozon.add_argument("--dry-run", action="store_true")
+
+    sheets_source_cost_wb = sheets_subparsers.add_parser(
+        "source-cost-wb",
+        help="выгрузить себестоимость WB из 1С в DATA",
+    )
+    sheets_source_cost_wb.add_argument("--spreadsheet-id")
+    sheets_source_cost_wb.add_argument("--sheet-name", default="DATA")
+    sheets_source_cost_wb.add_argument("--start-cell", default="BB1")
+    sheets_source_cost_wb.add_argument("--limit", type=int)
+    sheets_source_cost_wb.add_argument("--mode", choices=("upsert", "replace"), default="replace")
+    sheets_source_cost_wb.add_argument("--dry-run", action="store_true")
+
     return parser
 
 

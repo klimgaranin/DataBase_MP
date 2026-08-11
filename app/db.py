@@ -1244,6 +1244,44 @@ def upsert_supply_pipeline_current(rows: list[dict[str, Any]], *, run_id: str, s
             return len(values)
 
 
+def replace_source_cost_by_warehouse_current(rows: list[dict[str, Any]], *, run_id: str) -> int:
+    values = [
+        (
+            r["article"],
+            r["warehouse_name"],
+            r.get("row_number") or 0,
+            r.get("code") or "",
+            r.get("product_name") or "",
+            r.get("tnved_code") or "",
+            r.get("quantity") or 0,
+            r.get("unit_cost_byn") or 0,
+            r.get("total_cost_byn") or 0,
+            json.dumps(r.get("payload", {}), ensure_ascii=False, default=str),
+            run_id,
+        )
+        for r in rows
+        if r.get("article") and r.get("warehouse_name")
+    ]
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute("TRUNCATE staging.source_cost_by_warehouse_current")
+            if not values:
+                return 0
+            execute_values(
+                cur,
+                """
+                INSERT INTO staging.source_cost_by_warehouse_current
+                    (article, warehouse_name, row_number, code, product_name, tnved_code,
+                     quantity, unit_cost_byn, total_cost_byn, payload, source_run_id)
+                VALUES %s
+                """,
+                values,
+                template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)",
+                page_size=1000,
+            )
+            return len(values)
+
+
 def insert_raw_api_responses(rows: list[dict[str, Any]]) -> int:
     if not rows:
         return 0

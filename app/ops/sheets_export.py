@@ -15,11 +15,15 @@ from app.db import connect
 ORDER_EXPORT_HEADERS = ["Дата", "Артикул", "Кол-во", "Сумма"]
 OZON_PLACEMENT_EXPORT_HEADERS = ["Артикул", "Платно, шт", "Платно, л", "Списано в день, RUB", "Дней до первой платности"]
 API_ERP_TRU_SALES_EXPORT_HEADERS = ["Артикул", "Кол-во"]
+SOURCE_MARKETPLACE_COST_EXPORT_HEADERS = ["Артикул", "С/с BYN"]
 SOURCE_PRODUCTION_INVENTORY_EXPORT_HEADERS = ["Артикул", "СМП", "ОСН", "СОХ", "СВХ", "ТС"]
 SOURCE_SUPPLY_PIPELINE_EXPORT_HEADERS = ["Артикул", "СОГЛ Заказа", "В ПРОИЗВ", "ГОТОВ", "В ПУТИ", "МИНСК"]
 DEFAULT_ORDERS_SHEET_NAME = "DATA"
+DEFAULT_MP_COST_SPREADSHEET_ID = "1vFXRJTGkfW1_NSWzThDYLGKpSOMUCTnZGEc6P8BZ4dg"
 DEFAULT_OZON_START_CELL = "A1"
 DEFAULT_WB_START_CELL = "F1"
+DEFAULT_SOURCE_COST_OZON_START_CELL = "AX1"
+DEFAULT_SOURCE_COST_WB_START_CELL = "BB1"
 DEFAULT_OZON_PLACEMENT_START_CELL = "K1"
 DEFAULT_SOURCE_PRODUCTION_INVENTORY_START_CELL = "Q1"
 DEFAULT_SOURCE_SUPPLY_PIPELINE_START_CELL = "X1"
@@ -50,6 +54,12 @@ class OzonPlacementSheetRow:
 class ApiErpTruSalesSheetRow:
     article: str
     sales_count: int
+
+
+@dataclass(frozen=True)
+class SourceMarketplaceCostSheetRow:
+    article: str
+    unit_cost_byn: Decimal
 
 
 @dataclass(frozen=True)
@@ -124,7 +134,7 @@ class ApiErpTruSalesExportResult:
 
 @dataclass(frozen=True)
 class SourceBlockExportResult:
-    block: Literal["production-inventory", "supply-pipeline"]
+    block: Literal["production-inventory", "supply-pipeline", "source-cost-ozon", "source-cost-wb"]
     sheet_name: str
     start_cell: str
     rows_count: int
@@ -221,6 +231,13 @@ def build_api_erp_tru_sales_sheet_values(rows: Sequence[ApiErpTruSalesSheetRow])
     return values
 
 
+def build_source_marketplace_cost_sheet_values(rows: Sequence[SourceMarketplaceCostSheetRow]) -> list[list[Any]]:
+    values: list[list[Any]] = [SOURCE_MARKETPLACE_COST_EXPORT_HEADERS]
+    for row in rows:
+        values.append([row.article, _amount_to_sheet_value(row.unit_cost_byn)])
+    return values
+
+
 def build_source_production_inventory_sheet_values(rows: Sequence[SourceProductionInventorySheetRow]) -> list[list[Any]]:
     values: list[list[Any]] = [SOURCE_PRODUCTION_INVENTORY_EXPORT_HEADERS]
     for row in rows:
@@ -291,7 +308,14 @@ def _target_columns(start_cell: str, width: int) -> tuple[str, str, int]:
     return start_column, end_column, start_row
 
 
-def _source_block_number_formats(block: Literal["production-inventory", "supply-pipeline"]) -> list[dict[str, str]]:
+def _source_block_number_formats(
+    block: Literal["production-inventory", "supply-pipeline", "source-cost-ozon", "source-cost-wb"],
+) -> list[dict[str, str]]:
+    if block in {"source-cost-ozon", "source-cost-wb"}:
+        return [
+            {"type": "TEXT"},
+            {"type": "NUMBER"},
+        ]
     if block == "production-inventory":
         return [
             {"type": "TEXT"},
@@ -311,7 +335,14 @@ def _source_block_number_formats(block: Literal["production-inventory", "supply-
     ]
 
 
-def _apply_source_block_formats(*, client: Any, spreadsheet_id: str, sheet_name: str, start_cell: str, block: Literal["production-inventory", "supply-pipeline"]) -> None:
+def _apply_source_block_formats(
+    *,
+    client: Any,
+    spreadsheet_id: str,
+    sheet_name: str,
+    start_cell: str,
+    block: Literal["production-inventory", "supply-pipeline", "source-cost-ozon", "source-cost-wb"],
+) -> None:
     format_columns = getattr(client, "set_column_number_formats", None)
     if not callable(format_columns):
         return
@@ -749,6 +780,35 @@ def fetch_api_erp_tru_sales_sheet_rows(*, limit: int | None = None) -> list[ApiE
             ]
 
 
+def fetch_source_marketplace_cost_sheet_rows(
+    *,
+    marketplace: Literal["ozon", "wb"],
+    limit: int | None = None,
+) -> list[SourceMarketplaceCostSheetRow]:
+    limit_sql = "LIMIT %s" if limit is not None else ""
+    params: list[Any] = [marketplace]
+    if limit is not None:
+        params.append(limit)
+    sql = f"""
+        SELECT article, unit_cost_byn
+        FROM analytics.source_cost_marketplace_for_sheets
+        WHERE marketplace = %s
+          AND unit_cost_byn IS NOT NULL
+        ORDER BY article
+        {limit_sql}
+    """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [
+                SourceMarketplaceCostSheetRow(
+                    article=str(article or ""),
+                    unit_cost_byn=Decimal(unit_cost_byn or 0),
+                )
+                for article, unit_cost_byn in cur.fetchall()
+            ]
+
+
 def fetch_source_production_inventory_sheet_rows(*, limit: int | None = None) -> list[SourceProductionInventorySheetRow]:
     limit_sql = "LIMIT %s" if limit is not None else ""
     params: list[Any] = []
@@ -996,7 +1056,7 @@ def export_api_erp_tru_sales_to_sheets(**kwargs: Any) -> int:
 
 def export_source_block_to_sheets(
     *,
-    block: Literal["production-inventory", "supply-pipeline"],
+    block: Literal["production-inventory", "supply-pipeline", "source-cost-ozon", "source-cost-wb"],
     **kwargs: Any,
 ) -> int:
     result = run_source_block_to_sheets(block=block, verbose=True, **kwargs)
@@ -1005,7 +1065,7 @@ def export_source_block_to_sheets(
 
 def run_source_block_to_sheets(
     *,
-    block: Literal["production-inventory", "supply-pipeline"],
+    block: Literal["production-inventory", "supply-pipeline", "source-cost-ozon", "source-cost-wb"],
     spreadsheet_id: str | None = None,
     sheet_name: str = DEFAULT_ORDERS_SHEET_NAME,
     start_cell: str | None = None,
@@ -1023,12 +1083,26 @@ def run_source_block_to_sheets(
         rows = fetch_source_production_inventory_sheet_rows(limit=limit)
         values = build_source_production_inventory_sheet_values(rows)
         label = "Остатки МП"
-    else:
+    elif block == "supply-pipeline":
         target_start_cell = start_cell or DEFAULT_SOURCE_SUPPLY_PIPELINE_START_CELL
         headers = SOURCE_SUPPLY_PIPELINE_EXPORT_HEADERS
         rows = fetch_source_supply_pipeline_sheet_rows(limit=limit)
         values = build_source_supply_pipeline_sheet_values(rows)
         label = "Список заказов"
+    elif block == "source-cost-ozon":
+        target_spreadsheet_id = spreadsheet_id or DEFAULT_MP_COST_SPREADSHEET_ID
+        target_start_cell = start_cell or DEFAULT_SOURCE_COST_OZON_START_CELL
+        headers = SOURCE_MARKETPLACE_COST_EXPORT_HEADERS
+        rows = fetch_source_marketplace_cost_sheet_rows(marketplace="ozon", limit=limit)
+        values = build_source_marketplace_cost_sheet_values(rows)
+        label = "Себестоимость Ozon"
+    else:
+        target_spreadsheet_id = spreadsheet_id or DEFAULT_MP_COST_SPREADSHEET_ID
+        target_start_cell = start_cell or DEFAULT_SOURCE_COST_WB_START_CELL
+        headers = SOURCE_MARKETPLACE_COST_EXPORT_HEADERS
+        rows = fetch_source_marketplace_cost_sheet_rows(marketplace="wb", limit=limit)
+        values = build_source_marketplace_cost_sheet_values(rows)
+        label = "Себестоимость WB"
 
     if verbose:
         print(f"{label}: подготовлено строк: {len(rows)}")
@@ -1383,6 +1457,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_common_sheet_args(source_pipeline, default_start_cell=DEFAULT_SOURCE_SUPPLY_PIPELINE_START_CELL, default_mode="replace")
 
+    source_cost_ozon = subparsers.add_parser(
+        "source-cost-ozon",
+        help="выгрузить себестоимость Ozon из 1С в DATA",
+    )
+    _add_common_sheet_args(source_cost_ozon, default_start_cell=DEFAULT_SOURCE_COST_OZON_START_CELL, default_mode="replace")
+
+    source_cost_wb = subparsers.add_parser(
+        "source-cost-wb",
+        help="выгрузить себестоимость WB из 1С в DATA",
+    )
+    _add_common_sheet_args(source_cost_wb, default_start_cell=DEFAULT_SOURCE_COST_WB_START_CELL, default_mode="replace")
+
     return parser
 
 
@@ -1434,6 +1520,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "source-supply-pipeline":
         return export_source_block_to_sheets(
             block="supply-pipeline",
+            spreadsheet_id=args.spreadsheet_id,
+            sheet_name=args.sheet_name,
+            start_cell=args.start_cell,
+            limit=args.limit,
+            mode=args.mode,
+            dry_run=args.dry_run,
+        )
+    if args.command == "source-cost-ozon":
+        return export_source_block_to_sheets(
+            block="source-cost-ozon",
+            spreadsheet_id=args.spreadsheet_id,
+            sheet_name=args.sheet_name,
+            start_cell=args.start_cell,
+            limit=args.limit,
+            mode=args.mode,
+            dry_run=args.dry_run,
+        )
+    if args.command == "source-cost-wb":
+        return export_source_block_to_sheets(
+            block="source-cost-wb",
             spreadsheet_id=args.spreadsheet_id,
             sheet_name=args.sheet_name,
             start_cell=args.start_cell,
