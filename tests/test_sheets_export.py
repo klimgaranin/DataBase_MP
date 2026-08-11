@@ -8,6 +8,7 @@ from app.clients.google_sheets import quote_sheet_name
 from app.ops.sheets_export import (
     DEFAULT_ORDERS_SHEET_NAME,
     DEFAULT_OZON_START_CELL,
+    DEFAULT_SOURCE_COST_GENERAL_START_CELL,
     DEFAULT_WB_START_CELL,
     OzonPlacementSheetRow,
     OzonOrderSheetRow,
@@ -16,6 +17,7 @@ from app.ops.sheets_export import (
     WB_ORDER_EXPORT_TIME_ZONE,
     build_ozon_placement_sheet_values,
     build_ozon_order_sheet_values,
+    build_source_marketplace_cost_sheet_values,
     build_source_production_inventory_sheet_values,
     build_source_supply_pipeline_sheet_values,
     default_orders_date_from,
@@ -23,6 +25,7 @@ from app.ops.sheets_export import (
     sync_sheet_table,
     SheetSyncResult,
     PlacementExportResult,
+    SourceMarketplaceCostSheetRow,
 )
 from app.jobs.job_sheets_ozon_placement_export import _fallback_warning
 
@@ -151,6 +154,16 @@ class SheetsExportTests(unittest.TestCase):
             build_source_supply_pipeline_sheet_values(pipeline_rows),
             [["Артикул", "СОГЛ Заказа", "В ПРОИЗВ", "ГОТОВ", "В ПУТИ", "МИНСК"], ["21045", 1, 2, 3, 4, "10.08.2026"]],
         )
+
+    def test_source_cost_general_export_shape(self) -> None:
+        values = build_source_marketplace_cost_sheet_values(
+            [
+                SourceMarketplaceCostSheetRow(article="21045", unit_cost_byn=Decimal("3.50")),
+            ]
+        )
+
+        self.assertEqual(DEFAULT_SOURCE_COST_GENERAL_START_CELL, "BK1")
+        self.assertEqual(values, [["Артикул", "С/с BYN"], ["21045", 3.5]])
 
     def test_ozon_placement_fallback_warning_mentions_stale_report(self) -> None:
         result = PlacementExportResult(

@@ -73,11 +73,19 @@ def main() -> int:
     started_at = now_iso_utc()
     status = "ok"
     error: Optional[str] = None
+    general: SourceBlockExportResult | None = None
     ozon: SourceBlockExportResult | None = None
     wb: SourceBlockExportResult | None = None
 
     try:
         log.info("Выгрузка себестоимости в Sheets: старт, режим=%s, dry_run=%s", mode, bool(cfg["dry_run"]))
+        general = run_source_block_to_sheets(
+            block="source-cost-general",
+            spreadsheet_id=str(cfg["spreadsheet_id"]),
+            mode=mode,  # type: ignore[arg-type]
+            dry_run=bool(cfg["dry_run"]),
+            verbose=False,
+        )
         ozon = run_source_block_to_sheets(
             block="source-cost-ozon",
             spreadsheet_id=str(cfg["spreadsheet_id"]),
@@ -92,6 +100,7 @@ def main() -> int:
             dry_run=bool(cfg["dry_run"]),
             verbose=False,
         )
+        log.info("Выгрузка себестоимости в Sheets: %s", _format_result("Общий", general))
         log.info("Выгрузка себестоимости в Sheets: %s", _format_result("Ozon", ozon))
         log.info("Выгрузка себестоимости в Sheets: %s", _format_result("WB", wb))
         return 0
@@ -105,10 +114,17 @@ def main() -> int:
         try:
             ozon_sync = ozon.sync if ozon is not None else None
             wb_sync = wb.sync if wb is not None else None
-            updated_cells = (ozon_sync.updated_cells if ozon_sync is not None else 0) + (
-                wb_sync.updated_cells if wb_sync is not None else 0
+            general_sync = general.sync if general is not None else None
+            updated_cells = (
+                (general_sync.updated_cells if general_sync is not None else 0)
+                + (ozon_sync.updated_cells if ozon_sync is not None else 0)
+                + (wb_sync.updated_cells if wb_sync is not None else 0)
             )
-            rows_count = (ozon.rows_count if ozon is not None else 0) + (wb.rows_count if wb is not None else 0)
+            rows_count = (
+                (general.rows_count if general is not None else 0)
+                + (ozon.rows_count if ozon is not None else 0)
+                + (wb.rows_count if wb is not None else 0)
+            )
             insert_job_run(
                 job_name=JOB_NAME,
                 started_at_iso=started_at,
@@ -128,9 +144,10 @@ def main() -> int:
             log.warning("Выгрузка себестоимости в Sheets: не удалось записать итог запуска в job_runs: %s", job_error)
 
         ts = now_msk_label()
-        if status == "ok" and ozon is not None and wb is not None:
+        if status == "ok" and general is not None and ozon is not None and wb is not None:
             msg = (
                 f"✅ {ALERT_NAME} | {ts} | OK\n\n"
+                f"➡ {_format_result('Общий', general)}\n"
                 f"➡ {_format_result('Ozon', ozon)}\n"
                 f"➡ {_format_result('WB', wb)}"
             )

@@ -482,7 +482,13 @@ powershell -ExecutionPolicy Bypass -File scripts\register_source_files_refresh_t
 - spreadsheet `1vFXRJTGkfW1_NSWzThDYLGKpSOMUCTnZGEc6P8BZ4dg`;
 - Ozon себестоимость: `DATA!AX:AY`;
 - WB себестоимость: `DATA!BB:BC`;
-- колонки `AZ` и `BD` не трогаются, там остаются формулы пересчёта BYN в RUB.
+- общая себестоимость: `DATA!BK:BL`;
+- колонки `AZ`, `BD` и `BM` не трогаются, там остаются формулы пересчёта BYN в
+  RUB.
+
+Общая себестоимость считается по складам 1С `основной`,
+`ДЛЯ МАРКЕТПЛЕЙСОВ`, `Ответственное хранение Великий камень`: количество и
+себестоимость суммируются по артикулу, затем считается цена единицы.
 
 Боевой запуск:
 
@@ -795,9 +801,9 @@ Credential Manager через `keyring`.
 | `SOURCE_COSTS_LOG_FILE`        | ❌           | `logs/job_source_costs.log` | Файл лога source costs job |
 | `SOURCE_COSTS_DRY_RUN`         | ❌           | `0`          | Проверка себестоимости без записи в БД |
 | `SOURCE_COSTS_SKIP_UNCHANGED`  | ❌           | `1`          | Не обновлять БД, если файл себестоимости не изменился |
-| `SHEETS_SOURCE_COSTS_SPREADSHEET_ID` | ❌    | `1vFXRJTGkfW1_NSWzThDYLGKpSOMUCTnZGEc6P8BZ4dg` | Таблица для себестоимости WB/Ozon |
+| `SHEETS_SOURCE_COSTS_SPREADSHEET_ID` | ❌    | `1vFXRJTGkfW1_NSWzThDYLGKpSOMUCTnZGEc6P8BZ4dg` | Таблица для общей/WB/Ozon себестоимости |
 | `SHEETS_SOURCE_COSTS_EXPORT_LOG_FILE` | ❌   | `logs/job_sheets_source_costs_export.log` | Файл лога выгрузки себестоимости |
-| `SHEETS_SOURCE_COSTS_EXPORT_MODE` | ❌      | `replace`    | Режим обновления блоков `DATA!AX:AY` и `DATA!BB:BC` |
+| `SHEETS_SOURCE_COSTS_EXPORT_MODE` | ❌      | `replace`    | Режим обновления блоков `DATA!AX:AY`, `DATA!BB:BC` и `DATA!BK:BL` |
 | `SHEETS_SOURCE_COSTS_EXPORT_DRY_RUN` | ❌   | `0`          | Проверить Sheets job без записи       |
 | `OZON_STOCKS_LOG_FILE`         | ❌           | —            | Файл лога Ozon stocks job             |
 | `OZON_STOCKS_DRY_RUN`          | ❌           | `0`          | Проверить stocks без API/БД           |
