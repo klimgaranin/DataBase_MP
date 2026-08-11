@@ -102,7 +102,7 @@ def main() -> int:
         raw_rows = parsed["warehouse_rows"]
         if not raw_rows:
             no_changes = True
-            log.warning("Себестоимость 1С: файл не похож на расширенный отчёт с себестоимостью, БД и Sheets не трогаем: %s", path)
+            log.info("Себестоимость 1С: файл не похож на расширенный отчёт с себестоимостью, БД и Sheets не трогаем: %s", path)
             return int(cfg.get("no_changes_exit_code") or 0)
         normalized_raw = [
             row
