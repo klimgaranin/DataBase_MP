@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import sys
-from html import escape
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +18,7 @@ setup_sys_path(__file__)
 load_env(__file__)
 
 from app.db import advisory_unlock, insert_job_run, try_advisory_lock
+from app.ops.telegram_alerts import JobAlert, render_job_alert, sheet_rows_metric, sheet_sync_warnings
 from app.ops.sheets_export import ApiErpTruSalesExportResult, run_api_erp_tru_sales_to_sheets
 
 
@@ -114,9 +114,17 @@ def main() -> int:
 
         ts = now_msk_label()
         if status == "ok" and result is not None:
-            msg = f"✅ {ALERT_NAME} | {ts} | OK\n\n➡ {_format_result(result)}"
+            msg = render_job_alert(
+                JobAlert(
+                    job_name=ALERT_NAME,
+                    timestamp=ts,
+                    status="OK",
+                    metrics=(sheet_rows_metric("ERP/TRU", result),),
+                    warnings=sheet_sync_warnings((result,)),
+                )
+            )
         else:
-            msg = f"❌ {ALERT_NAME} | {ts} | FAIL\n{escape((error or 'unknown')[:200])}"
+            msg = render_job_alert(JobAlert(job_name=ALERT_NAME, timestamp=ts, status="FAIL", error=error))
         tg_send(msg, logger=log)
         advisory_unlock(LOCK_ID)
 

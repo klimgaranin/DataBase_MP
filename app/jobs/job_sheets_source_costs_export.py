@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import sys
-from html import escape
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +18,7 @@ setup_sys_path(__file__)
 load_env(__file__)
 
 from app.db import advisory_unlock, insert_job_run, try_advisory_lock
+from app.ops.telegram_alerts import JobAlert, render_job_alert, sheet_rows_metric, sheet_sync_warnings
 from app.ops.sheets_export import DEFAULT_MP_COST_SPREADSHEET_ID, SourceBlockExportResult, run_source_block_to_sheets
 
 
@@ -145,14 +145,21 @@ def main() -> int:
 
         ts = now_msk_label()
         if status == "ok" and general is not None and ozon is not None and wb is not None:
-            msg = (
-                f"✅ {ALERT_NAME} | {ts} | OK\n\n"
-                f"➡ {_format_result('Общий', general)}\n"
-                f"➡ {_format_result('Ozon', ozon)}\n"
-                f"➡ {_format_result('WB', wb)}"
+            msg = render_job_alert(
+                JobAlert(
+                    job_name=ALERT_NAME,
+                    timestamp=ts,
+                    status="OK",
+                    metrics=(
+                        sheet_rows_metric("Общий", general),
+                        sheet_rows_metric("Ozon", ozon),
+                        sheet_rows_metric("WB", wb),
+                    ),
+                    warnings=sheet_sync_warnings((general, ozon, wb)),
+                )
             )
         else:
-            msg = f"❌ {ALERT_NAME} | {ts} | FAIL\n{escape((error or 'unknown')[:200])}"
+            msg = render_job_alert(JobAlert(job_name=ALERT_NAME, timestamp=ts, status="FAIL", error=error))
         tg_send(msg, logger=log)
         advisory_unlock(LOCK_ID)
 

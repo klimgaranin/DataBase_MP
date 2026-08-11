@@ -3,8 +3,8 @@ from __future__ import annotations
 import unittest
 from datetime import date
 
-from app.jobs.job_sheets_orders_export import _format_alert_result, _format_alert_warnings
 from app.ops.sheets_export import OrderExportResult, SheetSyncResult
+from app.ops.telegram_alerts import JobAlert, render_job_alert, sheet_rows_metric, sheet_sync_warnings
 
 
 def _result(marketplace: str, *, rows: int, added_sheet_rows: int = 0, stale_rows: int = 0) -> OrderExportResult:
@@ -35,16 +35,32 @@ def _result(marketplace: str, *, rows: int, added_sheet_rows: int = 0, stale_row
 
 class SheetsOrdersExportJobTests(unittest.TestCase):
     def test_alert_result_is_short(self) -> None:
-        text = _format_alert_result(_result("ozon", rows=11287))
+        result = _result("ozon", rows=11287)
+        text = render_job_alert(
+            JobAlert(
+                job_name="Sheets_Orders_Export",
+                timestamp="11.08.2026 14:22",
+                status="OK",
+                metrics=(sheet_rows_metric("Ozon", result),),
+            )
+        )
 
-        self.assertEqual(text, "➡ Ozon строк: 11287")
+        self.assertIn("➡ Ozon: 11287 строк", text)
         self.assertNotIn("режим", text)
         self.assertNotIn("ячеек", text)
 
     def test_alert_warnings_show_only_nonstandard_events(self) -> None:
-        self.assertEqual(_format_alert_warnings([_result("ozon", rows=10)]), "")
+        self.assertEqual(sheet_sync_warnings([_result("ozon", rows=10)]), ())
 
-        warning = _format_alert_warnings([_result("ozon", rows=10, added_sheet_rows=3, stale_rows=2)])
+        warning = render_job_alert(
+            JobAlert(
+                job_name="Sheets_Orders_Export",
+                timestamp="11.08.2026 14:22",
+                status="OK",
+                metrics=(sheet_rows_metric("Ozon", _result("ozon", rows=10)),),
+                warnings=sheet_sync_warnings([_result("ozon", rows=10, added_sheet_rows=3, stale_rows=2)]),
+            )
+        )
 
         self.assertIn("Строк листа добавлено: 3", warning)
         self.assertIn("Устаревших строк очищено: 2", warning)

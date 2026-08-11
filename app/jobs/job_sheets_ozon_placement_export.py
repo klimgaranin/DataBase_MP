@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import os
 import sys
-from html import escape
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +19,7 @@ setup_sys_path(__file__)
 load_env(__file__)
 
 from app.db import advisory_unlock, insert_job_run, try_advisory_lock
+from app.ops.telegram_alerts import AlertWarning, JobAlert, render_job_alert, sheet_rows_metric, sheet_sync_warnings
 from app.ops.sheets_export import PlacementExportResult, run_ozon_placement_to_sheets
 
 
@@ -73,6 +73,18 @@ def _fallback_warning(result: PlacementExportResult) -> str:
     return (
         "\n\n⚠ Использован не сегодняшний отчёт Ozon placement: "
         f"{result.report_date}, ожидали {result.expected_report_date}.\n"
+        "Повторная попытка должна сработать через несколько часов."
+    )
+
+
+def _fallback_alert_warning(result: PlacementExportResult) -> AlertWarning | None:
+    if result.report_date is None or result.expected_report_date is None:
+        return None
+    if result.report_date >= result.expected_report_date:
+        return None
+    return AlertWarning(
+        "Использован не сегодняшний отчёт Ozon placement: "
+        f"{result.report_date}, ожидали {result.expected_report_date}. "
         "Повторная попытка должна сработать через несколько часов."
     )
 
@@ -136,9 +148,21 @@ def main() -> int:
 
         ts = now_msk_label()
         if status == "ok" and result is not None:
-            msg = f"✅ {ALERT_NAME} | {ts} | OK\n\n➡ {_format_result(result)}{_fallback_warning(result)}"
+            warnings = list(sheet_sync_warnings((result,)))
+            fallback_warning = _fallback_alert_warning(result)
+            if fallback_warning is not None:
+                warnings.append(fallback_warning)
+            msg = render_job_alert(
+                JobAlert(
+                    job_name=ALERT_NAME,
+                    timestamp=ts,
+                    status="OK",
+                    metrics=(sheet_rows_metric("Ozon хранение", result),),
+                    warnings=tuple(warnings),
+                )
+            )
         else:
-            msg = f"❌ {ALERT_NAME} | {ts} | FAIL\n{escape((error or 'unknown')[:200])}"
+            msg = render_job_alert(JobAlert(job_name=ALERT_NAME, timestamp=ts, status="FAIL", error=error))
         tg_send(msg, logger=log)
         advisory_unlock(LOCK_ID)
 

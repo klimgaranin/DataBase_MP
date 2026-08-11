@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import os
 import sys
-from html import escape
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +18,7 @@ setup_sys_path(__file__)
 load_env(__file__)
 
 from app.db import advisory_unlock, insert_job_run, try_advisory_lock
+from app.ops.telegram_alerts import JobAlert, render_job_alert, sheet_rows_metric, sheet_sync_warnings
 from app.ops.sheets_export import SourceBlockExportResult, run_source_block_to_sheets
 
 
@@ -128,13 +128,20 @@ def main() -> int:
 
         ts = now_msk_label()
         if status == "ok" and inventory is not None and pipeline is not None:
-            msg = (
-                f"✅ {ALERT_NAME} | {ts} | OK\n\n"
-                f"➡ {_format_result('Остатки МП', inventory)}\n"
-                f"➡ {_format_result('Список заказов', pipeline)}"
+            msg = render_job_alert(
+                JobAlert(
+                    job_name=ALERT_NAME,
+                    timestamp=ts,
+                    status="OK",
+                    metrics=(
+                        sheet_rows_metric("Остатки МП", inventory),
+                        sheet_rows_metric("Список заказов", pipeline),
+                    ),
+                    warnings=sheet_sync_warnings((inventory, pipeline)),
+                )
             )
         else:
-            msg = f"❌ {ALERT_NAME} | {ts} | FAIL\n{escape((error or 'unknown')[:200])}"
+            msg = render_job_alert(JobAlert(job_name=ALERT_NAME, timestamp=ts, status="FAIL", error=error))
         tg_send(msg, logger=log)
         advisory_unlock(LOCK_ID)
 
