@@ -64,6 +64,22 @@ def _format_result(result: OrderExportResult) -> str:
     )
 
 
+def _format_alert_result(result: OrderExportResult) -> str:
+    label = "Ozon" if result.marketplace == "ozon" else "WB"
+    return f"➡ {label} строк: {result.rows_count}"
+
+
+def _format_alert_warnings(results: list[OrderExportResult]) -> str:
+    added_rows = sum((result.sync.added_sheet_rows if result.sync is not None else 0) for result in results)
+    stale_rows = sum((result.sync.stale_rows if result.sync is not None else 0) for result in results)
+    warnings: list[str] = []
+    if added_rows:
+        warnings.append(f"⚠️ Строк листа добавлено: {added_rows}")
+    if stale_rows:
+        warnings.append(f"⚠️ Устаревших строк очищено: {stale_rows}")
+    return ("\n\n" + "\n".join(warnings)) if warnings else ""
+
+
 def main() -> int:
     cfg = _load_job_config()
     log = setup_logging(JOB_NAME, log_file=cfg["log_file"] if isinstance(cfg["log_file"], str) else None)
@@ -135,8 +151,8 @@ def main() -> int:
 
         ts = now_msk_label()
         if status == "ok":
-            details = "\n".join(f"➡ {_format_result(result)}" for result in results)
-            msg = f"✅ {ALERT_NAME} | {ts} | OK\n\n{details}"
+            details = "\n".join(_format_alert_result(result) for result in results)
+            msg = f"✅ {ALERT_NAME} | {ts} | OK\n\n{details}{_format_alert_warnings(results)}"
         else:
             msg = f"❌ {ALERT_NAME} | {ts} | FAIL\n{escape((error or 'unknown')[:200])}"
         tg_send(msg, logger=log)
