@@ -34,6 +34,31 @@ def normalize_source_cost_row(row: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def aggregate_source_cost_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    for row in rows:
+        key = (str(row.get("article") or ""), str(row.get("warehouse_name") or ""))
+        if not key[0] or not key[1]:
+            continue
+        target = grouped.get(key)
+        if target is None:
+            target = dict(row)
+            target["payload"] = {"rows": [row.get("payload", row)]}
+            grouped[key] = target
+        else:
+            target["quantity"] = Decimal(target.get("quantity") or 0) + Decimal(row.get("quantity") or 0)
+            target["total_cost_byn"] = Decimal(target.get("total_cost_byn") or 0) + Decimal(row.get("total_cost_byn") or 0)
+            target["payload"]["rows"].append(row.get("payload", row))
+
+    for row in grouped.values():
+        quantity = Decimal(row.get("quantity") or 0)
+        total_cost = Decimal(row.get("total_cost_byn") or 0)
+        if quantity != 0 and total_cost != 0:
+            row["unit_cost_byn"] = total_cost / quantity
+
+    return list(grouped.values())
+
+
 def normalize_article(value: Any) -> str:
     if value is None:
         return ""

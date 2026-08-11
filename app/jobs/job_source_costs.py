@@ -19,7 +19,7 @@ load_env(__file__)
 
 from app.clients.local_source_cost_file import DEFAULT_COST_FILE_PATH, read_source_cost_file
 from app.clients.local_source_files import file_sha256
-from app.normalize.norm_source_costs import normalize_source_cost_row
+from app.normalize.norm_source_costs import aggregate_source_cost_rows, normalize_source_cost_row
 
 
 JOB_NAME = "source_costs"
@@ -100,12 +100,13 @@ def main() -> int:
 
         parsed = read_source_cost_file(path)
         raw_rows = parsed["warehouse_rows"]
-        normalized = [
+        normalized_raw = [
             row
             for source_row in raw_rows
             for row in [normalize_source_cost_row(source_row)]
             if row is not None
         ]
+        normalized = aggregate_source_cost_rows(normalized_raw)
         api_rows = int(parsed["data_row_count"])
 
         if cfg["dry_run"]:
