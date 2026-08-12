@@ -67,6 +67,7 @@ ALLOWED_ROOT_DIRS = {
     "app",
     "archive",
     "evidence",
+    "frontend",
     "infra",
     "local",
     "logs",

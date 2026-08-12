@@ -8,6 +8,7 @@ ENV/
 env/
 .ENV/
 .env_*/
+node_modules/
 
 .env
 .env.*

@@ -1,10 +1,91 @@
 from __future__ import annotations
 
+import subprocess
+import sys
+import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from app.ops.health import dependency_status, safe_dsn_summary
 from app.secrets import SENSITIVE_SECRET_NAMES, get_secret, secret_status
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+JOB_ACTIONS: dict[str, dict[str, str]] = {
+    "wb_orders": {
+        "title": "WB заказы",
+        "description": "Обновить текущий слой заказов WB в PostgreSQL.",
+        "script": "scripts/run_wb_orders.cmd",
+        "marketplace": "WB",
+        "group": "База",
+    },
+    "wb_order_feed": {
+        "title": "WB лента заказов",
+        "description": "Обновить новую ленту заказов WB с историей статусов.",
+        "script": "scripts/run_wb_order_feed.cmd",
+        "marketplace": "WB",
+        "group": "База",
+    },
+    "wb_stocks": {
+        "title": "WB остатки",
+        "description": "Обновить остатки WB по складам.",
+        "script": "scripts/run_wb_stocks.cmd",
+        "marketplace": "WB",
+        "group": "База",
+    },
+    "ozon_orders": {
+        "title": "Ozon FBO заказы",
+        "description": "Обновить FBO отправления Ozon и историю изменений.",
+        "script": "scripts/run_ozon_orders.cmd",
+        "marketplace": "Ozon",
+        "group": "База",
+    },
+    "ozon_stocks": {
+        "title": "Ozon остатки",
+        "description": "Обновить товары и остатки Ozon.",
+        "script": "scripts/run_ozon_stocks.cmd",
+        "marketplace": "Ozon",
+        "group": "База",
+    },
+    "ozon_placement": {
+        "title": "Ozon хранение",
+        "description": "Запросить и загрузить отчёт платного хранения Ozon.",
+        "script": "scripts/run_ozon_placement.cmd",
+        "marketplace": "Ozon",
+        "group": "Отчёты",
+    },
+    "source_files": {
+        "title": "Файлы 1С",
+        "description": "Обновить остатки МП и список заказов из файлов.",
+        "script": "scripts/run_source_files_refresh.cmd",
+        "marketplace": "1C",
+        "group": "Файлы",
+    },
+    "source_costs": {
+        "title": "Себестоимость",
+        "description": "Обновить себестоимость и витрины для Sheets.",
+        "script": "scripts/run_source_costs_refresh.cmd",
+        "marketplace": "1C",
+        "group": "Файлы",
+    },
+    "erp_tru_sales": {
+        "title": "ERP/TRU продажи",
+        "description": "Обновить статистику продаж ERP/TRU и выгрузку в Sheets.",
+        "script": "scripts/run_api_erp_tru_sales_refresh.cmd",
+        "marketplace": "ERP",
+        "group": "Sheets",
+    },
+    "sheets_orders": {
+        "title": "Заказы в Sheets",
+        "description": "Выгрузить актуальные WB и Ozon заказы в Google Sheets.",
+        "script": "scripts/run_sheets_orders_export.cmd",
+        "marketplace": "Sheets",
+        "group": "Sheets",
+    },
+}
 
 
 def _db_fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
@@ -90,6 +171,54 @@ def get_jobs(*, limit: int = 20) -> list[dict[str, Any]]:
 
 def get_secrets_status() -> dict[str, bool]:
     return secret_status(SENSITIVE_SECRET_NAMES)
+
+
+def get_job_actions() -> list[dict[str, Any]]:
+    actions: list[dict[str, Any]] = []
+    for key, action in JOB_ACTIONS.items():
+        script_path = PROJECT_ROOT / action["script"]
+        actions.append(
+            {
+                "key": key,
+                "title": action["title"],
+                "description": action["description"],
+                "marketplace": action["marketplace"],
+                "group": action["group"],
+                "available": script_path.exists(),
+            }
+        )
+    return actions
+
+
+def start_job_action(key: str) -> dict[str, Any]:
+    action = JOB_ACTIONS.get(key)
+    if action is None:
+        raise ValueError("Неизвестная команда запуска")
+
+    script_path = (PROJECT_ROOT / action["script"]).resolve()
+    if not script_path.exists():
+        raise FileNotFoundError(f"Скрипт не найден: {action['script']}")
+
+    job_id = str(uuid.uuid4())
+    if sys.platform == "win32":
+        cmd = ["cmd", "/c", str(script_path)]
+        creationflags = subprocess.CREATE_NO_WINDOW
+    else:
+        cmd = [str(script_path)]
+        creationflags = 0
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(PROJECT_ROOT),
+        creationflags=creationflags,
+    )
+    return {
+        "job_id": job_id,
+        "key": key,
+        "title": action["title"],
+        "pid": proc.pid,
+        "started_at": datetime.now().isoformat(),
+    }
 
 
 def get_orders_feed(*, marketplace: str, limit: int = 100) -> list[dict[str, Any]]:

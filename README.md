@@ -286,6 +286,18 @@ http://localhost:8080/admin
 Данные админки защищены `API_SERVER_TOKEN`. Вставьте токен в поле `API token`.
 Значения секретов в интерфейсе не показываются, только статус.
 
+Frontend админки лежит в `frontend/admin` и собирается в `app/admin/static`:
+
+```powershell
+cd frontend\admin
+npm install
+npm run check
+npm run build
+```
+
+В production запускается только FastAPI server, отдельный Node.js сервер не
+нужен.
+
 ### Аудит Google Таблицы `Аналитика МП`
 
 Для переноса логики из Google Таблицы в PostgreSQL/Web используется read-only

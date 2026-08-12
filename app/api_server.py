@@ -172,6 +172,25 @@ def admin_orders(marketplace: str = "wb", limit: int = 100, _auth: str = Depends
     return {"items": items}
 
 
+@app.get("/api/v1/admin/actions")
+def admin_actions(_auth: str = Depends(_verify_token)):
+    from app.admin.service import get_job_actions
+
+    return {"items": get_job_actions()}
+
+
+@app.post("/api/v1/admin/actions/{key}/run", status_code=202)
+def admin_run_action(key: str, _auth: str = Depends(_verify_token)):
+    from app.admin.service import start_job_action
+
+    try:
+        return start_job_action(key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
 @app.post("/api/v1/drr/start", status_code=202)
 def drr_start(
     body:  DrrStartRequest,
