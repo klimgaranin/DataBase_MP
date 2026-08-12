@@ -13,6 +13,27 @@ from app.secrets import SENSITIVE_SECRET_NAMES, get_secret, secret_status
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+OZON_STATUS_LABELS = {
+    "awaiting_registration": "Ожидает регистрации",
+    "acceptance_in_progress": "Идёт приёмка",
+    "awaiting_approve": "Ожидает подтверждения",
+    "awaiting_packaging": "Ожидает сборки",
+    "awaiting_deliver": "Ожидает отгрузки",
+    "arbitration": "Арбитраж",
+    "client_arbitration": "Клиентский арбитраж",
+    "delivering": "Доставляется",
+    "driver_pickup": "Ожидает курьера",
+    "delivered": "Доставлен",
+    "cancelled": "Отменён",
+    "not_accepted": "Не принят",
+    "sent_by_seller": "Передан продавцом",
+}
+
+WB_STATUS_LABELS = {
+    "active": "Активный",
+    "cancelled": "Отменён",
+}
+
 
 JOB_ACTIONS: dict[str, dict[str, str]] = {
     "wb_orders": {
@@ -117,6 +138,60 @@ def _jsonable_row(row: dict[str, Any]) -> dict[str, Any]:
     return {key: _jsonable(value) for key, value in row.items()}
 
 
+def _label_status(marketplace: str, status: str | None) -> str:
+    status_key = (status or "").strip().lower()
+    if marketplace == "ozon":
+        return OZON_STATUS_LABELS.get(status_key, status or "-")
+    if marketplace == "wb":
+        return WB_STATUS_LABELS.get(status_key, status or "-")
+    return status or "-"
+
+
+def _wb_primary_image_url(nm_id: Any) -> str | None:
+    try:
+        value = int(nm_id)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+
+    volume = value // 100000
+    part = value // 1000
+    if volume <= 143:
+        basket = "01"
+    elif volume <= 287:
+        basket = "02"
+    elif volume <= 431:
+        basket = "03"
+    elif volume <= 719:
+        basket = "04"
+    elif volume <= 1007:
+        basket = "05"
+    elif volume <= 1061:
+        basket = "06"
+    elif volume <= 1115:
+        basket = "07"
+    elif volume <= 1169:
+        basket = "08"
+    elif volume <= 1313:
+        basket = "09"
+    elif volume <= 1601:
+        basket = "10"
+    elif volume <= 1655:
+        basket = "11"
+    elif volume <= 1919:
+        basket = "12"
+    elif volume <= 2045:
+        basket = "13"
+    elif volume <= 2189:
+        basket = "14"
+    elif volume <= 2405:
+        basket = "15"
+    else:
+        basket = "16"
+    return f"https://basket-{basket}.wbbasket.ru/vol{volume}/part{part}/{value}/images/big/1.webp"
+
+
 def get_overview() -> dict[str, Any]:
     secrets = secret_status(SENSITIVE_SECRET_NAMES)
     deps = dependency_status()
@@ -129,7 +204,7 @@ def get_overview() -> dict[str, Any]:
     except Exception as exc:
         db_status = {"ok": False, "error": str(exc)}
 
-    jobs = get_jobs(limit=6)
+    jobs = get_jobs(since_hours=24, limit=500)
     failed_jobs = [job for job in jobs if str(job.get("status", "")).lower() != "ok"]
 
     return {
@@ -150,19 +225,29 @@ def get_overview() -> dict[str, Any]:
     }
 
 
-def get_jobs(*, limit: int = 20) -> list[dict[str, Any]]:
+def get_jobs(*, limit: int = 20, since_hours: int | None = None) -> list[dict[str, Any]]:
+    limit = max(1, min(limit, 500))
     try:
+        where_sql = ""
+        params: tuple[Any, ...]
+        if since_hours is not None:
+            hours = max(1, min(since_hours, 168))
+            where_sql = "WHERE started_at >= NOW() - (%s || ' hours')::interval"
+            params = (hours, limit)
+        else:
+            params = (limit,)
         rows = _db_fetch_all(
-            """
+            f"""
             SELECT job_name, started_at, finished_at, status,
                    api_rows, raw_new, norm_upserted, duplicates,
                    ROUND(dup_pct::numeric, 2) AS dup_pct,
                    LEFT(COALESCE(error, ''), 240) AS error
             FROM job_runs
+            {where_sql}
             ORDER BY id DESC
             LIMIT %s
             """,
-            (max(1, min(limit, 100)),),
+            params,
         )
     except Exception as exc:
         return [{"job_name": "DB", "status": "error", "error": str(exc)}]
@@ -222,7 +307,7 @@ def start_job_action(key: str) -> dict[str, Any]:
 
 
 def get_orders_feed(*, marketplace: str, limit: int = 100) -> list[dict[str, Any]]:
-    limit = max(1, min(limit, 500))
+    limit = max(1, min(limit, 1000))
     if marketplace == "ozon":
         rows = _db_fetch_all(
             """
@@ -239,14 +324,27 @@ def get_orders_feed(*, marketplace: str, limit: int = 100) -> list[dict[str, Any
                 product_quantity AS quantity,
                 product_price_amount AS price,
                 financial_payout AS payout,
-                updated_at
+                p.primary_image AS image_url,
+                staging.ozon_fbo_order_items_full.updated_at
             FROM staging.ozon_fbo_order_items_full
+            LEFT JOIN LATERAL (
+                SELECT primary_image
+                FROM raw.ozon_product_info_items
+                WHERE offer_id = staging.ozon_fbo_order_items_full.product_offer_id
+                ORDER BY updated_at DESC
+                LIMIT 1
+            ) p ON TRUE
             ORDER BY COALESCE(in_process_at, created_at, updated_at) DESC NULLS LAST
             LIMIT %s
             """,
             (limit,),
         )
-        return [_jsonable_row({"marketplace": "Ozon", **row}) for row in rows]
+        result = []
+        for row in rows:
+            row["order_group_key"] = row.get("order_number") or row.get("order_key")
+            row["status_label"] = _label_status("ozon", row.get("status"))
+            result.append(_jsonable_row({"marketplace": "Ozon", **row}))
+        return result
 
     if marketplace == "wb":
         rows = _db_fetch_all(
@@ -271,6 +369,12 @@ def get_orders_feed(*, marketplace: str, limit: int = 100) -> list[dict[str, Any
             """,
             (limit,),
         )
-        return [_jsonable_row({"marketplace": "WB", **row}) for row in rows]
+        result = []
+        for row in rows:
+            row["order_group_key"] = row.get("order_number") or row.get("order_key")
+            row["status_label"] = _label_status("wb", row.get("status"))
+            row["image_url"] = _wb_primary_image_url(row.get("marketplace_sku"))
+            result.append(_jsonable_row({"marketplace": "WB", **row}))
+        return result
 
     raise ValueError("marketplace должен быть wb или ozon")

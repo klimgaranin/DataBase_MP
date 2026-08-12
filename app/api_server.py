@@ -148,10 +148,10 @@ def admin_overview(_auth: str = Depends(_verify_token)):
 
 
 @app.get("/api/v1/admin/jobs")
-def admin_jobs(limit: int = 20, _auth: str = Depends(_verify_token)):
+def admin_jobs(limit: int = 20, hours: int | None = None, _auth: str = Depends(_verify_token)):
     from app.admin.service import get_jobs
 
-    return {"items": get_jobs(limit=limit)}
+    return {"items": get_jobs(limit=limit, since_hours=hours)}
 
 
 @app.get("/api/v1/admin/secrets")
@@ -285,4 +285,5 @@ if __name__ == "__main__":
         port    = int(os.getenv("API_SERVER_PORT", "8080")),
         workers = 1,
         reload  = False,
+        use_colors = False,
     )

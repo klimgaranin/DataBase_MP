@@ -15,7 +15,7 @@
       Arial,
       sans-serif;
     letter-spacing: 0;
-    background: #edf2f5;
+    background: #f4f6f8;
   }
 
   button,
@@ -43,15 +43,15 @@
   }
 
   .button-primary {
-    @apply inline-flex h-10 items-center justify-center gap-2 rounded-ui bg-teal px-4 text-sm font-extrabold text-white transition duration-200 hover:-translate-y-0.5 hover:bg-[#0b5f59] hover:shadow-soft active:translate-y-0;
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-ui bg-primary px-4 text-sm font-extrabold text-white transition duration-200 hover:-translate-y-0.5 hover:bg-[#284f76] hover:shadow-soft active:translate-y-0;
   }
 
   .button-secondary {
-    @apply inline-flex h-10 items-center justify-center gap-2 rounded-ui border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-soft transition duration-200 hover:-translate-y-0.5 hover:border-teal hover:text-teal active:translate-y-0;
+    @apply inline-flex h-10 items-center justify-center gap-2 rounded-ui border border-line bg-white px-4 text-sm font-extrabold text-ink shadow-soft transition duration-200 hover:-translate-y-0.5 hover:border-primary hover:text-primary active:translate-y-0;
   }
 
   .button-dark {
-    @apply inline-flex h-9 items-center justify-center gap-2 rounded-ui bg-[#172322] px-3 text-xs font-extrabold text-white transition duration-200 hover:-translate-y-0.5 hover:bg-teal active:translate-y-0;
+    @apply inline-flex h-9 items-center justify-center gap-2 rounded-ui bg-[#26333f] px-3 text-xs font-extrabold text-white transition duration-200 hover:-translate-y-0.5 hover:bg-primary active:translate-y-0;
   }
 
   .empty-cell {

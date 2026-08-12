@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Check,
   Database,
+  ImageOff,
   KeyRound,
   LayoutDashboard,
   ListOrdered,
@@ -49,14 +50,30 @@ type JobAction = {
 type OrderRow = {
   marketplace?: string;
   order_key?: string;
+  order_group_key?: string;
   order_number?: string;
   status?: string;
+  status_label?: string;
   order_date?: string;
   warehouse_name?: string;
   article?: string;
   product_name?: string;
+  image_url?: string;
   quantity?: number | string;
   price?: number | string;
+};
+
+type OrderGroup = {
+  key: string;
+  marketplace?: string;
+  orderNumber?: string;
+  status?: string;
+  statusLabel?: string;
+  date?: string;
+  warehouseName?: string;
+  rows: OrderRow[];
+  totalQuantity: number;
+  totalAmount: number;
 };
 
 type Toast = {
@@ -88,11 +105,16 @@ function formatMoney(value?: number | string) {
   return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 2 }).format(number);
 }
 
+function asNumber(value?: number | string) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
 function statusTone(value?: string) {
   const text = String(value || "").toLowerCase();
-  if (["ok", "success", "active", "delivered", "задан"].includes(text)) return "good";
-  if (["error", "failed", "fail", "cancelled", "не задан"].includes(text)) return "bad";
-  if (text.includes("awaiting") || text.includes("process") || text.includes("running")) return "warn";
+  if (["ok", "success", "active", "delivered", "задан", "доставлен", "активный"].includes(text)) return "good";
+  if (["error", "failed", "fail", "cancelled", "не задан", "отменён", "отменен"].includes(text)) return "bad";
+  if (text.includes("awaiting") || text.includes("ожидает") || text.includes("process") || text.includes("running") || text.includes("идёт")) return "warn";
   return "info";
 }
 
@@ -111,6 +133,36 @@ function StatusPill({ value }: { value?: string }) {
       {value || "-"}
     </span>
   );
+}
+
+function groupOrders(rows: OrderRow[]): OrderGroup[] {
+  const map = new Map<string, OrderGroup>();
+  for (const row of rows) {
+    const key = row.order_group_key || row.order_number || row.order_key || "Без номера";
+    const quantity = asNumber(row.quantity);
+    const amount = quantity * asNumber(row.price);
+    const current = map.get(key);
+    if (current) {
+      current.rows.push(row);
+      current.totalQuantity += quantity;
+      current.totalAmount += amount;
+      if (!current.date && row.order_date) current.date = row.order_date;
+      continue;
+    }
+    map.set(key, {
+      key,
+      marketplace: row.marketplace,
+      orderNumber: row.order_number,
+      status: row.status,
+      statusLabel: row.status_label || row.status,
+      date: row.order_date,
+      warehouseName: row.warehouse_name,
+      rows: [row],
+      totalQuantity: quantity,
+      totalAmount: amount,
+    });
+  }
+  return Array.from(map.values());
 }
 
 function App() {
@@ -248,16 +300,16 @@ function App() {
   const missingSecrets = overview?.alerts?.missing_required_secrets || [];
 
   return (
-    <div className="min-h-screen bg-slate-100 text-ink">
+    <div className="min-h-screen bg-[#f4f6f8] text-ink">
       <div className="grid min-h-screen grid-cols-[288px_minmax(0,1fr)] max-[820px]:block">
-        <aside className="sticky top-0 flex h-screen flex-col gap-6 bg-[#172322] p-6 text-white max-[820px]:relative max-[820px]:h-auto">
+        <aside className="sticky top-0 flex h-screen flex-col gap-6 bg-[#1f2933] p-6 text-white max-[820px]:relative max-[820px]:h-auto">
           <div className="grid grid-cols-[44px_minmax(0,1fr)] items-center gap-3">
-            <div className="grid h-11 w-11 place-items-center rounded-ui bg-[#e9fbf8] text-teal">
+            <div className="grid h-11 w-11 place-items-center rounded-ui bg-[#e7eef6] text-primary">
               <Database size={21} />
             </div>
             <div>
               <div className="text-lg font-extrabold">DataBase_MP</div>
-              <div className="text-xs text-[#9fbfbb]">Marketplace control</div>
+              <div className="text-xs text-[#b8c3cf]">Marketplace control</div>
             </div>
           </div>
 
@@ -267,9 +319,9 @@ function App() {
           </nav>
 
           <div className="mt-auto grid gap-3 border-t border-white/15 pt-5">
-            <label className="text-xs font-bold text-[#9fbfbb]" htmlFor="apiToken">API token</label>
-            <div className="grid h-10 grid-cols-[20px_minmax(0,1fr)] items-center gap-2 rounded-ui border border-[#38504d] bg-[#101b1a] px-3 transition focus-within:border-teal">
-              <KeyRound size={17} className="text-[#9fbfbb]" />
+            <label className="text-xs font-bold text-[#b8c3cf]" htmlFor="apiToken">API token</label>
+            <div className="grid h-10 grid-cols-[20px_minmax(0,1fr)] items-center gap-2 rounded-ui border border-[#3d4b59] bg-[#18222c] px-3 transition focus-within:border-primary">
+              <KeyRound size={17} className="text-[#b8c3cf]" />
               <input
                 id="apiToken"
                 type="password"
@@ -289,7 +341,7 @@ function App() {
         <main className="min-w-0 p-8 max-[820px]:p-5">
           <header className="mb-5 flex items-start justify-between gap-4 max-[820px]:grid">
             <div>
-              <div className="mb-1 text-xs font-extrabold uppercase text-teal">{page[0]}</div>
+              <div className="mb-1 text-xs font-extrabold uppercase text-primary">{page[0]}</div>
               <h1 className="text-[38px] font-black leading-none tracking-normal max-[820px]:text-[30px]">{page[1]}</h1>
               <p className="mt-2 text-muted">{page[2]}</p>
             </div>
@@ -305,7 +357,7 @@ function App() {
           <AnimatePresence>
             {notice && (
               <motion.div
-                className="mb-5 flex items-center gap-3 rounded-ui border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800"
+                className="mb-5 flex items-center gap-3 rounded-ui border border-[#ead8aa] bg-[#fff8e6] px-4 py-3 text-[#7a4f12]"
                 initial={{ opacity: 0, y: -8 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -8 }}
@@ -326,12 +378,11 @@ function App() {
                 </div>
 
                 <Panel title="Запуск jobs" subtitle="Доступные команды" action={<IconButton onClick={() => void loadAdmin()}><RefreshCw size={17} /></IconButton>}>
-                  <div className="grid grid-cols-12 gap-3 p-4 max-[820px]:grid-cols-1">
-                    {actions.length ? actions.map((action, index) => (
+                  <div className="grid grid-cols-[repeat(auto-fit,minmax(230px,1fr))] gap-3 p-4">
+                    {actions.length ? actions.map((action) => (
                       <ActionCard
                         key={action.key}
                         action={action}
-                        wide={index === 0 || index === 3 || index === 5 || index === 8}
                         running={running.has(action.key)}
                         onRun={() => void runAction(action)}
                       />
@@ -340,7 +391,7 @@ function App() {
                 </Panel>
 
                 <div className="grid grid-cols-[minmax(0,1.7fr)_minmax(280px,0.9fr)] gap-5 max-[1180px]:grid-cols-1">
-                  <Panel title="Последние запуски" subtitle="Журнал job_runs">
+                  <Panel title="Последние запуски" subtitle="За последние 24 часа">
                     <JobsTable items={overview?.jobs || []} />
                   </Panel>
                   <Panel title="Секреты" subtitle="Только статус">
@@ -358,15 +409,15 @@ function App() {
                   <label className="flex items-center gap-2 text-xs font-bold text-muted">
                     Строк
                     <select className="h-9 rounded-ui border border-line bg-white px-3 text-ink" value={limit} onChange={(event) => setLimit(Number(event.target.value))}>
-                      <option value={50}>50</option>
                       <option value={100}>100</option>
-                      <option value={200}>200</option>
+                      <option value={250}>250</option>
                       <option value={500}>500</option>
+                      <option value={1000}>1000</option>
                     </select>
                   </label>
                 </div>
-                <Panel title="Лента заказов" subtitle={`Последние строки ${marketplace.toUpperCase()}`} action={<span className="grid h-8 min-w-10 place-items-center rounded-full bg-emerald-50 px-3 text-sm font-extrabold text-emerald-700">{orders.length}</span>}>
-                  <OrdersTable items={orders} />
+                <Panel title="Лента заказов" subtitle={`Сгруппировано по заказам ${marketplace.toUpperCase()}`} action={<span className="grid h-8 min-w-10 place-items-center rounded-full bg-[#edf4fb] px-3 text-sm font-extrabold text-primary">{groupOrders(orders).length}</span>}>
+                  <OrdersFeed items={orders} />
                 </Panel>
               </motion.section>
             )}
@@ -402,7 +453,7 @@ function NavButton({ active, icon, children, onClick }: { active: boolean; icon:
     <button
       className={cls(
         "grid h-11 grid-cols-[20px_minmax(0,1fr)] items-center gap-3 rounded-ui px-3 text-left transition duration-200 hover:translate-x-0.5",
-        active ? "bg-[#e9fbf8] text-[#0b3d39]" : "bg-transparent text-[#cfe2df] hover:bg-[#223331] hover:text-white",
+        active ? "bg-[#e7eef6] text-[#1e3a5f]" : "bg-transparent text-[#d3dce6] hover:bg-[#2c3844] hover:text-white",
       )}
       onClick={onClick}
     >
@@ -414,9 +465,9 @@ function NavButton({ active, icon, children, onClick }: { active: boolean; icon:
 
 function Kpi({ icon, label, value, detail, tone }: { icon: React.ReactNode; label: string; value: string; detail: string; tone: "teal" | "violet" | "amber" }) {
   const colors = {
-    teal: "bg-teal-50 text-teal",
-    violet: "bg-violet-50 text-berry",
-    amber: "bg-amber-50 text-amber",
+    teal: "bg-[#e7eef6] text-primary",
+    violet: "bg-[#f0edf7] text-plum",
+    amber: "bg-[#fff3d8] text-sun",
   };
   return (
     <motion.article className="card grid min-h-[132px] grid-cols-[42px_minmax(0,1fr)] items-center gap-x-3 p-5" whileHover={{ y: -2 }}>
@@ -451,24 +502,24 @@ function IconButton({ children, onClick }: { children: React.ReactNode; onClick:
   );
 }
 
-function ActionCard({ action, wide, running, onRun }: { action: JobAction; wide: boolean; running: boolean; onRun: () => void }) {
+function ActionCard({ action, running, onRun }: { action: JobAction; running: boolean; onRun: () => void }) {
   const Icon = action.marketplace === "WB" ? ListOrdered : action.marketplace === "Ozon" ? Server : action.marketplace === "Sheets" ? LayoutDashboard : Database;
   return (
     <motion.article
-      className={cls("card col-span-3 grid min-h-[132px] grid-rows-[auto_1fr_auto] gap-3 p-4 max-[1180px]:col-span-6 max-[820px]:col-auto", wide && "col-span-4")}
+      className="card grid min-h-[148px] grid-rows-[auto_1fr_auto] gap-3 p-4"
       whileHover={{ y: -3 }}
       transition={{ type: "spring", stiffness: 320, damping: 24 }}
     >
       <div className="flex items-center justify-between gap-3">
-        <div className="grid h-10 w-10 place-items-center rounded-ui bg-teal-50 text-teal"><Icon size={18} /></div>
-        <span className="rounded-full bg-violet-50 px-2 py-1 text-xs font-extrabold text-berry">{action.group}</span>
+        <div className="grid h-10 w-10 place-items-center rounded-ui bg-[#edf4fb] text-primary"><Icon size={18} /></div>
+        <span className="rounded-full bg-[#f0edf7] px-2 py-1 text-xs font-extrabold text-plum">{action.group}</span>
       </div>
       <div>
         <div className="font-extrabold">{action.title}</div>
         <div className="mt-1 text-sm leading-snug text-muted">{action.description}</div>
       </div>
       <div className="flex items-center justify-between gap-3">
-        <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-extrabold text-muted">{action.marketplace}</span>
+        <span className="rounded-full bg-[#f1f4f7] px-2 py-1 text-xs font-extrabold text-muted">{action.marketplace}</span>
         <button className="button-dark" disabled={!action.available || running} onClick={onRun}>
           {running ? <RefreshCw size={15} className="animate-spin" /> : <Play size={15} />}
           <span>{running ? "Запуск..." : "Запустить"}</span>
@@ -480,7 +531,7 @@ function ActionCard({ action, wide, running, onRun }: { action: JobAction; wide:
 
 function JobsTable({ items }: { items: JobRun[] }) {
   return (
-    <div className="overflow-auto">
+    <div className="max-h-[420px] overflow-auto">
       <table className="min-w-[860px] w-full border-collapse">
         <thead>
           <tr>
@@ -523,46 +574,84 @@ function SecretsList({ items }: { items: Record<string, boolean> }) {
   );
 }
 
-function OrdersTable({ items }: { items: OrderRow[] }) {
+function OrdersFeed({ items }: { items: OrderRow[] }) {
+  const groups = groupOrders(items);
   return (
-    <div className="overflow-auto">
-      <table className="min-w-[980px] w-full border-collapse">
-        <thead>
-          <tr>
-            <TableHead>Маркет</TableHead>
-            <TableHead>Заказ</TableHead>
-            <TableHead>Статус</TableHead>
-            <TableHead>Дата</TableHead>
-            <TableHead>Склад</TableHead>
-            <TableHead>Артикул</TableHead>
-            <TableHead>Товар</TableHead>
-            <TableHead>Кол-во</TableHead>
-            <TableHead>Цена</TableHead>
-          </tr>
-        </thead>
-        <tbody>
-          {items.length ? items.map((order, index) => (
-            <tr key={`${order.marketplace}-${order.order_key}-${index}`} className="transition hover:bg-slate-50">
-              <TableCell><span className="rounded-full bg-violet-50 px-2 py-1 text-xs font-extrabold text-berry">{order.marketplace || "-"}</span></TableCell>
-              <TableCell><strong>{order.order_key || "-"}</strong><br /><span className="text-xs text-muted">{order.order_number || "-"}</span></TableCell>
-              <TableCell><StatusPill value={order.status} /></TableCell>
-              <TableCell>{formatDate(order.order_date)}</TableCell>
-              <TableCell>{order.warehouse_name || "-"}</TableCell>
-              <TableCell><strong>{order.article || "-"}</strong></TableCell>
-              <TableCell><span className="line-clamp-2 max-w-[360px] text-muted">{order.product_name || "-"}</span></TableCell>
-              <TableCell>{order.quantity ?? "-"}</TableCell>
-              <TableCell>{formatMoney(order.price)}</TableCell>
-            </tr>
-          )) : <tr><td className="empty-cell" colSpan={9}>Заказы не найдены</td></tr>}
-        </tbody>
-      </table>
+    <div className="grid max-h-[680px] gap-3 overflow-auto p-4">
+      {groups.length ? groups.map((group) => (
+        <motion.article
+          key={group.key}
+          className="rounded-ui border border-line bg-white p-4 transition hover:border-[#b8c7d8] hover:shadow-soft"
+          whileHover={{ y: -2 }}
+        >
+          <div className="mb-3 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4 max-[820px]:grid-cols-1">
+            <div className="min-w-0">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-[#f0edf7] px-2 py-1 text-xs font-extrabold text-plum">{group.marketplace || "-"}</span>
+                <StatusPill value={group.statusLabel || group.status} />
+              </div>
+              <h3 className="truncate text-xl font-black leading-tight">{group.key}</h3>
+              <div className="mt-1 text-sm text-muted">{formatDate(group.date)} · {group.warehouseName || "Склад не указан"}</div>
+            </div>
+            <div className="grid min-w-[170px] gap-1 rounded-ui bg-[#f6f8fa] px-3 py-2 text-right max-[820px]:text-left">
+              <span className="text-xs font-bold text-muted">Итого</span>
+              <strong>{group.totalQuantity} шт · {formatMoney(group.totalAmount)}</strong>
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            {group.rows.map((row, index) => (
+              <OrderProductRow key={`${row.order_key}-${row.article}-${index}`} row={row} />
+            ))}
+          </div>
+        </motion.article>
+      )) : <Empty text="Заказы не найдены" />}
     </div>
+  );
+}
+
+function OrderProductRow({ row }: { row: OrderRow }) {
+  return (
+    <div className="grid grid-cols-[58px_minmax(0,1fr)_auto] items-center gap-3 rounded-ui border border-[#edf1f5] bg-[#fbfcfd] p-2 max-[720px]:grid-cols-[58px_minmax(0,1fr)]">
+      <ProductImage src={row.image_url} name={row.product_name} />
+      <div className="min-w-0">
+        <div className="line-clamp-2 font-bold leading-snug">{row.product_name || "Товар без названия"}</div>
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+          <span>Артикул: <strong className="text-ink">{row.article || "-"}</strong></span>
+          <span>Отправление: {row.order_key || "-"}</span>
+        </div>
+      </div>
+      <div className="text-right max-[720px]:col-span-2 max-[720px]:text-left">
+        <div className="font-extrabold">{row.quantity ?? "-"} шт</div>
+        <div className="text-sm text-muted">{formatMoney(row.price)}</div>
+      </div>
+    </div>
+  );
+}
+
+function ProductImage({ src, name }: { src?: string; name?: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) {
+    return (
+      <div className="grid h-[58px] w-[58px] place-items-center rounded-ui bg-[#edf1f5] text-muted">
+        <ImageOff size={20} />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={name || "Фото товара"}
+      className="h-[58px] w-[58px] rounded-ui object-cover"
+      loading="lazy"
+      onError={() => setFailed(true)}
+    />
   );
 }
 
 function Segment({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
   return (
-    <button className={cls("h-9 min-w-[92px] rounded-md px-4 font-extrabold transition hover:-translate-y-0.5", active ? "bg-teal text-white" : "text-muted hover:bg-slate-50")} onClick={onClick}>
+    <button className={cls("h-9 min-w-[92px] rounded-md px-4 font-extrabold transition hover:-translate-y-0.5", active ? "bg-primary text-white" : "text-muted hover:bg-slate-50")} onClick={onClick}>
       {children}
     </button>
   );

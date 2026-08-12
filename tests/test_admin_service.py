@@ -27,6 +27,7 @@ class AdminServiceTests(unittest.TestCase):
     def test_ozon_orders_feed_maps_rows(self) -> None:
         row = {
             "order_key": "123",
+            "order_number": "05932939-0033",
             "status": "delivered",
             "order_date": None,
             "warehouse_name": "RFZ",
@@ -34,12 +35,16 @@ class AdminServiceTests(unittest.TestCase):
             "product_name": "Lamp",
             "quantity": 1,
             "price": 100,
+            "image_url": "https://example.test/image.jpg",
         }
         with patch("app.admin.service._db_fetch_all", return_value=[row]):
             items = get_orders_feed(marketplace="ozon", limit=10)
 
         self.assertEqual(items[0]["marketplace"], "Ozon")
         self.assertEqual(items[0]["order_key"], "123")
+        self.assertEqual(items[0]["order_group_key"], "05932939-0033")
+        self.assertEqual(items[0]["status_label"], "Доставлен")
+        self.assertEqual(items[0]["image_url"], "https://example.test/image.jpg")
 
     def test_job_actions_are_sanitized_for_ui(self) -> None:
         actions = get_job_actions()

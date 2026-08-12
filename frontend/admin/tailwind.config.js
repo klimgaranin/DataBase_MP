@@ -4,12 +4,12 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: "#151b23",
-        muted: "#64707d",
-        line: "#dbe2e8",
-        teal: "#0f766e",
-        berry: "#6d28d9",
-        amber: "#b45309",
+        ink: "#17212b",
+        muted: "#667085",
+        line: "#d9e0e7",
+        primary: "#315f8c",
+        plum: "#685786",
+        sun: "#9a6b25",
       },
       borderRadius: {
         ui: "8px",

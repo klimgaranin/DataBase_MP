@@ -95,15 +95,50 @@ def setup_logging(
     level_str = (log_level or os.getenv("LOG_LEVEL") or "INFO").strip().upper()
     level = getattr(logging, level_str, logging.INFO)
 
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    handlers: list[logging.Handler] = []
+    rich_logs = (os.getenv("RICH_LOGS") or "1").strip().lower() not in {"0", "false", "no", "off"}
+    if rich_logs:
+        try:
+            from rich.logging import RichHandler
+
+            console_handler: logging.Handler = RichHandler(
+                rich_tracebacks=True,
+                show_path=False,
+                markup=False,
+                log_time_format="%H:%M:%S",
+            )
+            console_handler.setFormatter(logging.Formatter("%(name)s | %(message)s"))
+        except Exception:
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(
+                logging.Formatter(
+                    "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+                    datefmt="%Y-%m-%d %H:%M:%S",
+                )
+            )
+    else:
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+    handlers.append(console_handler)
     if log_file:
-        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+        file_handler = logging.FileHandler(log_file, encoding="utf-8")
+        file_handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+                datefmt="%Y-%m-%d %H:%M:%S",
+            )
+        )
+        handlers.append(file_handler)
 
     logging.basicConfig(
         level=level,
-        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
         handlers=handlers,
+        force=True,
     )
     return logging.getLogger(job_name)
 
