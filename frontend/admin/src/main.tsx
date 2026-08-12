@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Activity,
   AlertTriangle,
   Check,
+  Clipboard,
   Database,
   ImageOff,
   KeyRound,
@@ -29,6 +30,7 @@ type JobRun = {
   api_rows?: number | string | null;
   norm_upserted?: number | string | null;
   duplicates?: number | string | null;
+  error?: string | null;
 };
 
 type AdminOverview = {
@@ -59,8 +61,18 @@ type OrderRow = {
   article?: string;
   product_name?: string;
   image_url?: string;
+  image_urls?: string[];
   quantity?: number | string;
   price?: number | string;
+};
+
+type ProductGroup = {
+  article: string;
+  productName?: string;
+  imageUrls: string[];
+  rows: OrderRow[];
+  totalQuantity: number;
+  totalAmount: number;
 };
 
 type OrderGroup = {
@@ -165,20 +177,52 @@ function groupOrders(rows: OrderRow[]): OrderGroup[] {
   return Array.from(map.values());
 }
 
+function groupProducts(rows: OrderRow[]): ProductGroup[] {
+  const map = new Map<string, ProductGroup>();
+  for (const row of rows) {
+    const key = row.article || row.product_name || "Без артикула";
+    const quantity = asNumber(row.quantity);
+    const amount = quantity * asNumber(row.price);
+    const current = map.get(key);
+    if (current) {
+      current.rows.push(row);
+      current.totalQuantity += quantity;
+      current.totalAmount += amount;
+      for (const url of row.image_urls || (row.image_url ? [row.image_url] : [])) {
+        if (url && !current.imageUrls.includes(url)) current.imageUrls.push(url);
+      }
+      continue;
+    }
+    map.set(key, {
+      article: key,
+      productName: row.product_name,
+      imageUrls: row.image_urls || (row.image_url ? [row.image_url] : []),
+      rows: [row],
+      totalQuantity: quantity,
+      totalAmount: amount,
+    });
+  }
+  return Array.from(map.values());
+}
+
 function App() {
   const [token, setToken] = useState(() => localStorage.getItem("dbmp_api_token") || "");
   const [tokenDraft, setTokenDraft] = useState(token);
   const [tab, setTab] = useState<Tab>("admin");
   const [marketplace, setMarketplace] = useState<Marketplace>("wb");
-  const [limit, setLimit] = useState(100);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [actions, setActions] = useState<JobAction[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
+  const [ordersOffset, setOrdersOffset] = useState(0);
+  const [ordersHasMore, setOrdersHasMore] = useState(true);
+  const [ordersLoadingMore, setOrdersLoadingMore] = useState(false);
   const [notice, setNotice] = useState("Вставьте API token.");
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState<Set<string>>(new Set());
   const [lastRefresh, setLastRefresh] = useState("-");
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const ordersSentinelRef = useRef<HTMLDivElement | null>(null);
+  const ordersPageSize = 50;
 
   const page = tab === "admin"
     ? ["Система", "Админка", "Состояние базы, секретов и последних jobs"]
@@ -239,15 +283,29 @@ function App() {
     }
   }
 
-  async function loadOrders() {
+  const loadOrders = useCallback(async ({ reset = false }: { reset?: boolean } = {}) => {
     if (!token) {
       setNotice("Вставьте API token.");
       return;
     }
-    setLoading(true);
+    const nextOffset = reset ? 0 : ordersOffset;
+    if (!reset && (!ordersHasMore || ordersLoadingMore)) return;
+    if (reset) {
+      setOrders([]);
+      setOrdersOffset(0);
+      setOrdersHasMore(true);
+      setLoading(true);
+    } else {
+      setOrdersLoadingMore(true);
+    }
     try {
-      const data = await requestJson<{ items: OrderRow[] }>(`/api/v1/admin/orders?marketplace=${marketplace}&limit=${limit}`);
-      setOrders(data.items || []);
+      const data = await requestJson<{ items: OrderRow[]; next_offset?: number; has_more?: boolean }>(
+        `/api/v1/admin/orders?marketplace=${marketplace}&limit=${ordersPageSize}&offset=${nextOffset}`,
+      );
+      const items = data.items || [];
+      setOrders((current) => (reset ? items : [...current, ...items]));
+      setOrdersOffset(data.next_offset ?? nextOffset + ordersPageSize);
+      setOrdersHasMore(Boolean(data.has_more && items.length > 0));
       setNotice("");
       setLastRefresh(new Date().toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" }));
     } catch (error) {
@@ -256,8 +314,9 @@ function App() {
       pushToast("Заказы не загрузились", text, "bad");
     } finally {
       setLoading(false);
+      setOrdersLoadingMore(false);
     }
-  }
+  }, [marketplace, ordersHasMore, ordersLoadingMore, ordersOffset, token]);
 
   async function runAction(action: JobAction) {
     setRunning((items) => new Set(items).add(action.key));
@@ -267,7 +326,7 @@ function App() {
         { method: "POST" },
       );
       pushToast("Job запущен", `${result.title || action.title}: pid ${result.pid}`);
-      window.setTimeout(loadAdmin, 900);
+      [900, 4000, 12000].forEach((delay) => window.setTimeout(loadAdmin, delay));
     } catch (error) {
       pushToast("Job не запущен", error instanceof Error ? error.message : "Ошибка", "bad");
     } finally {
@@ -288,16 +347,36 @@ function App() {
 
   function refresh() {
     if (tab === "admin") void loadAdmin();
-    if (tab === "orders") void loadOrders();
+    if (tab === "orders") void loadOrders({ reset: true });
   }
 
   useEffect(() => {
     refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, marketplace, limit, token]);
+  }, [tab, marketplace, token]);
+
+  useEffect(() => {
+    if (tab !== "orders") return undefined;
+    const node = ordersSentinelRef.current;
+    if (!node) return undefined;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        void loadOrders();
+      }
+    }, { rootMargin: "360px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loadOrders, tab]);
 
   const failedJobs = overview?.alerts?.failed_jobs || 0;
   const missingSecrets = overview?.alerts?.missing_required_secrets || [];
+  const orderGroups = groupOrders(orders);
+  const orderStats = {
+    groups: orderGroups.length,
+    articles: new Set(orders.map((row) => row.article).filter(Boolean)).size,
+    quantity: orders.reduce((sum, row) => sum + asNumber(row.quantity), 0),
+    amount: orders.reduce((sum, row) => sum + asNumber(row.quantity) * asNumber(row.price), 0),
+  };
 
   return (
     <div className="min-h-screen bg-[#f4f6f8] text-ink">
@@ -390,14 +469,13 @@ function App() {
                   </div>
                 </Panel>
 
-                <div className="grid grid-cols-[minmax(0,1.7fr)_minmax(280px,0.9fr)] gap-5 max-[1180px]:grid-cols-1">
-                  <Panel title="Последние запуски" subtitle="За последние 24 часа">
-                    <JobsTable items={overview?.jobs || []} />
-                  </Panel>
-                  <Panel title="Секреты" subtitle="Только статус">
-                    <SecretsList items={overview?.secrets || {}} />
-                  </Panel>
-                </div>
+                <Panel title="Последние запуски" subtitle="За последние 24 часа">
+                  <JobsTable items={overview?.jobs || []} />
+                </Panel>
+
+                <Panel title="Секреты" subtitle="Только статус">
+                  <SecretsList items={overview?.secrets || {}} />
+                </Panel>
               </motion.section>
             ) : (
               <motion.section key="orders" variants={variants} initial="hidden" animate="show" exit="hidden">
@@ -406,18 +484,23 @@ function App() {
                     <Segment active={marketplace === "wb"} onClick={() => setMarketplace("wb")}>WB</Segment>
                     <Segment active={marketplace === "ozon"} onClick={() => setMarketplace("ozon")}>Ozon</Segment>
                   </div>
-                  <label className="flex items-center gap-2 text-xs font-bold text-muted">
-                    Строк
-                    <select className="h-9 rounded-ui border border-line bg-white px-3 text-ink" value={limit} onChange={(event) => setLimit(Number(event.target.value))}>
-                      <option value={100}>100</option>
-                      <option value={250}>250</option>
-                      <option value={500}>500</option>
-                      <option value={1000}>1000</option>
-                    </select>
-                  </label>
+                  <span className="rounded-full bg-white px-3 py-2 text-xs font-extrabold text-muted shadow-soft">
+                    Загружено: {orderStats.groups} заказов
+                  </span>
                 </div>
-                <Panel title="Лента заказов" subtitle={`Сгруппировано по заказам ${marketplace.toUpperCase()}`} action={<span className="grid h-8 min-w-10 place-items-center rounded-full bg-[#edf4fb] px-3 text-sm font-extrabold text-primary">{groupOrders(orders).length}</span>}>
-                  <OrdersFeed items={orders} />
+                <div className="mb-4 grid grid-cols-4 gap-3 max-[980px]:grid-cols-2 max-[560px]:grid-cols-1">
+                  <MiniStat label="Заказов" value={orderStats.groups} />
+                  <MiniStat label="Артикулов" value={orderStats.articles} />
+                  <MiniStat label="Штук" value={orderStats.quantity} />
+                  <MiniStat label="Сумма" value={formatMoney(orderStats.amount)} />
+                </div>
+                <Panel title="Лента заказов" subtitle={`Сгруппировано по заказам ${marketplace.toUpperCase()}`} action={<span className="grid h-8 min-w-10 place-items-center rounded-full bg-[#edf4fb] px-3 text-sm font-extrabold text-primary">{orderStats.groups}</span>}>
+                  <OrdersFeed
+                    items={orders}
+                    hasMore={ordersHasMore}
+                    loadingMore={ordersLoadingMore}
+                    sentinelRef={ordersSentinelRef}
+                  />
                 </Panel>
               </motion.section>
             )}
@@ -479,9 +562,18 @@ function Kpi({ icon, label, value, detail, tone }: { icon: React.ReactNode; labe
   );
 }
 
+function MiniStat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <motion.div className="card px-4 py-3" whileHover={{ y: -2 }}>
+      <div className="text-xs font-extrabold uppercase text-muted">{label}</div>
+      <div className="mt-1 text-xl font-black">{value}</div>
+    </motion.div>
+  );
+}
+
 function Panel({ title, subtitle, action, children }: { title: string; subtitle: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <motion.section className="card mb-5 overflow-hidden" whileHover={{ y: -2 }}>
+    <motion.section className="card mb-5" whileHover={{ y: -2 }}>
       <div className="flex min-h-[66px] items-center justify-between gap-4 border-b border-slate-100 px-4 py-3">
         <div>
           <h2 className="text-lg font-extrabold">{title}</h2>
@@ -531,7 +623,7 @@ function ActionCard({ action, running, onRun }: { action: JobAction; running: bo
 
 function JobsTable({ items }: { items: JobRun[] }) {
   return (
-    <div className="max-h-[420px] overflow-auto">
+    <div className="max-h-[min(680px,62vh)] overflow-auto">
       <table className="min-w-[860px] w-full border-collapse">
         <thead>
           <tr>
@@ -545,14 +637,23 @@ function JobsTable({ items }: { items: JobRun[] }) {
         </thead>
         <tbody>
           {items.length ? items.map((job, index) => (
-            <tr key={`${job.job_name}-${job.started_at}-${index}`} className="transition hover:bg-slate-50">
-              <TableCell><strong>{job.job_name || "-"}</strong></TableCell>
-              <TableCell><StatusPill value={job.status} /></TableCell>
-              <TableCell>{formatDate(job.started_at)}</TableCell>
-              <TableCell>{job.api_rows ?? "-"}</TableCell>
-              <TableCell>{job.norm_upserted ?? "-"}</TableCell>
-              <TableCell>{job.duplicates ?? "-"}</TableCell>
-            </tr>
+            <React.Fragment key={`${job.job_name}-${job.started_at}-${index}`}>
+              <tr className="transition hover:bg-slate-50">
+                <TableCell><strong>{job.job_name || "-"}</strong></TableCell>
+                <TableCell><StatusPill value={job.status} /></TableCell>
+                <TableCell>{formatDate(job.started_at)}</TableCell>
+                <TableCell>{job.api_rows ?? "-"}</TableCell>
+                <TableCell>{job.norm_upserted ?? "-"}</TableCell>
+                <TableCell>{job.duplicates ?? "-"}</TableCell>
+              </tr>
+              {job.error ? (
+                <tr>
+                  <td className="border-b border-slate-100 bg-[#fff8e6] px-3 py-2 text-sm text-[#7a4f12]" colSpan={6}>
+                    <strong>Ошибка:</strong> {job.error}
+                  </td>
+                </tr>
+              ) : null}
+            </React.Fragment>
           )) : <tr><td className="empty-cell" colSpan={6}>Запусков пока нет</td></tr>}
         </tbody>
       </table>
@@ -574,66 +675,105 @@ function SecretsList({ items }: { items: Record<string, boolean> }) {
   );
 }
 
-function OrdersFeed({ items }: { items: OrderRow[] }) {
+function OrdersFeed({
+  items,
+  hasMore,
+  loadingMore,
+  sentinelRef,
+}: {
+  items: OrderRow[];
+  hasMore: boolean;
+  loadingMore: boolean;
+  sentinelRef: React.RefObject<HTMLDivElement | null>;
+}) {
   const groups = groupOrders(items);
   return (
-    <div className="grid max-h-[680px] gap-3 overflow-auto p-4">
-      {groups.length ? groups.map((group) => (
-        <motion.article
-          key={group.key}
-          className="rounded-ui border border-line bg-white p-4 transition hover:border-[#b8c7d8] hover:shadow-soft"
-          whileHover={{ y: -2 }}
-        >
-          <div className="mb-3 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4 max-[820px]:grid-cols-1">
-            <div className="min-w-0">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-[#f0edf7] px-2 py-1 text-xs font-extrabold text-plum">{group.marketplace || "-"}</span>
-                <StatusPill value={group.statusLabel || group.status} />
+    <div className="grid gap-3 p-4">
+      {groups.length ? (
+        <>
+          {groups.map((group) => (
+            <motion.article
+              key={group.key}
+              className="rounded-ui border border-line bg-white p-4 transition hover:border-[#b8c7d8] hover:shadow-soft"
+              whileHover={{ y: -2 }}
+            >
+              <div className="mb-3 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4 max-[820px]:grid-cols-1">
+                <div className="min-w-0">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-[#f0edf7] px-2 py-1 text-xs font-extrabold text-plum">{group.marketplace || "-"}</span>
+                    <StatusPill value={group.statusLabel || group.status} />
+                  </div>
+                  <h3 className="break-words text-xl font-black leading-tight">{group.key}</h3>
+                  <div className="mt-1 text-sm text-muted">{formatDate(group.date)} · {group.warehouseName || "Склад не указан"}</div>
+                </div>
+                <div className="grid min-w-[170px] gap-1 rounded-ui bg-[#f6f8fa] px-3 py-2 text-right max-[820px]:text-left">
+                  <span className="text-xs font-bold text-muted">Итого</span>
+                  <strong>{group.totalQuantity} шт · {formatMoney(group.totalAmount)}</strong>
+                </div>
               </div>
-              <h3 className="truncate text-xl font-black leading-tight">{group.key}</h3>
-              <div className="mt-1 text-sm text-muted">{formatDate(group.date)} · {group.warehouseName || "Склад не указан"}</div>
-            </div>
-            <div className="grid min-w-[170px] gap-1 rounded-ui bg-[#f6f8fa] px-3 py-2 text-right max-[820px]:text-left">
-              <span className="text-xs font-bold text-muted">Итого</span>
-              <strong>{group.totalQuantity} шт · {formatMoney(group.totalAmount)}</strong>
-            </div>
-          </div>
 
-          <div className="grid gap-2">
-            {group.rows.map((row, index) => (
-              <OrderProductRow key={`${row.order_key}-${row.article}-${index}`} row={row} />
-            ))}
+              <div className="grid gap-2">
+                {groupProducts(group.rows).map((product) => (
+                  <OrderProductRow key={product.article} product={product} />
+                ))}
+              </div>
+            </motion.article>
+          ))}
+          <div ref={sentinelRef} className="py-4 text-center text-sm text-muted">
+            {loadingMore ? "Загружаю ещё заказы..." : hasMore ? "Прокрутите ниже, чтобы загрузить ещё" : "Все видимые заказы загружены"}
           </div>
-        </motion.article>
-      )) : <Empty text="Заказы не найдены" />}
+        </>
+      ) : <Empty text="Заказы не найдены" />}
     </div>
   );
 }
 
-function OrderProductRow({ row }: { row: OrderRow }) {
+function OrderProductRow({ product }: { product: ProductGroup }) {
   return (
-    <div className="grid grid-cols-[58px_minmax(0,1fr)_auto] items-center gap-3 rounded-ui border border-[#edf1f5] bg-[#fbfcfd] p-2 max-[720px]:grid-cols-[58px_minmax(0,1fr)]">
-      <ProductImage src={row.image_url} name={row.product_name} />
+    <div className="grid grid-cols-[72px_minmax(0,1fr)_auto] items-start gap-3 rounded-ui border border-[#edf1f5] bg-[#fbfcfd] p-3 max-[720px]:grid-cols-[72px_minmax(0,1fr)]">
+      <ProductImage urls={product.imageUrls} name={product.productName} />
       <div className="min-w-0">
-        <div className="line-clamp-2 font-bold leading-snug">{row.product_name || "Товар без названия"}</div>
+        <div className="line-clamp-2 font-bold leading-snug">{product.productName || "Товар без названия"}</div>
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
-          <span>Артикул: <strong className="text-ink">{row.article || "-"}</strong></span>
-          <span>Отправление: {row.order_key || "-"}</span>
+          <span>Артикул: <strong className="text-ink">{product.article}</strong></span>
+          <span>Строк: {product.rows.length}</span>
         </div>
+        <CopyChips rows={product.rows} />
       </div>
       <div className="text-right max-[720px]:col-span-2 max-[720px]:text-left">
-        <div className="font-extrabold">{row.quantity ?? "-"} шт</div>
-        <div className="text-sm text-muted">{formatMoney(row.price)}</div>
+        <div className="font-extrabold">{product.totalQuantity} шт</div>
+        <div className="text-sm text-muted">{formatMoney(product.totalAmount)}</div>
       </div>
     </div>
   );
 }
 
-function ProductImage({ src, name }: { src?: string; name?: string }) {
-  const [failed, setFailed] = useState(false);
-  if (!src || failed) {
+function CopyChips({ rows }: { rows: OrderRow[] }) {
+  const uniqueKeys = Array.from(new Set(rows.map((row) => row.order_key).filter(Boolean))) as string[];
+  if (!uniqueKeys.length) return null;
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {uniqueKeys.map((key) => (
+        <button
+          key={key}
+          className="inline-flex max-w-full items-center gap-1 rounded-md border border-[#dce4eb] bg-white px-2 py-1 text-xs font-bold text-muted transition hover:border-primary hover:text-primary"
+          title="Скопировать"
+          onClick={() => void navigator.clipboard?.writeText(key)}
+        >
+          <Clipboard size={12} />
+          <span className="truncate">{key}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ProductImage({ urls, name }: { urls: string[]; name?: string }) {
+  const [index, setIndex] = useState(0);
+  const src = urls[index];
+  if (!src) {
     return (
-      <div className="grid h-[58px] w-[58px] place-items-center rounded-ui bg-[#edf1f5] text-muted">
+      <div className="grid h-[72px] w-[72px] place-items-center rounded-ui bg-[#edf1f5] text-muted">
         <ImageOff size={20} />
       </div>
     );
@@ -642,9 +782,9 @@ function ProductImage({ src, name }: { src?: string; name?: string }) {
     <img
       src={src}
       alt={name || "Фото товара"}
-      className="h-[58px] w-[58px] rounded-ui object-cover"
+      className="h-[72px] w-[72px] rounded-ui object-cover transition duration-200 hover:scale-[2.6] hover:shadow-panel hover:z-10 hover:relative"
       loading="lazy"
-      onError={() => setFailed(true)}
+      onError={() => setIndex((current) => current + 1)}
     />
   );
 }

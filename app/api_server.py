@@ -162,14 +162,14 @@ def admin_secrets(_auth: str = Depends(_verify_token)):
 
 
 @app.get("/api/v1/admin/orders")
-def admin_orders(marketplace: str = "wb", limit: int = 100, _auth: str = Depends(_verify_token)):
+def admin_orders(marketplace: str = "wb", limit: int = 50, offset: int = 0, _auth: str = Depends(_verify_token)):
     from app.admin.service import get_orders_feed
 
     try:
-        items = get_orders_feed(marketplace=marketplace.lower(), limit=limit)
+        items = get_orders_feed(marketplace=marketplace.lower(), limit=limit, offset=offset)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"items": items}
+    return {"items": items, "next_offset": offset + limit, "has_more": len(items) > 0}
 
 
 @app.get("/api/v1/admin/actions")

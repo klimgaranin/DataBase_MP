@@ -12,6 +12,7 @@ from app.secrets import SENSITIVE_SECRET_NAMES, get_secret, secret_status
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_ACTION_RUNS: list[dict[str, Any]] = []
 
 OZON_STATUS_LABELS = {
     "awaiting_registration": "Ожидает регистрации",
@@ -147,13 +148,13 @@ def _label_status(marketplace: str, status: str | None) -> str:
     return status or "-"
 
 
-def _wb_primary_image_url(nm_id: Any) -> str | None:
+def _wb_image_urls(nm_id: Any) -> list[str]:
     try:
         value = int(nm_id)
     except (TypeError, ValueError):
-        return None
+        return []
     if value <= 0:
-        return None
+        return []
 
     volume = value // 100000
     part = value // 1000
@@ -189,7 +190,45 @@ def _wb_primary_image_url(nm_id: Any) -> str | None:
         basket = "15"
     else:
         basket = "16"
-    return f"https://basket-{basket}.wbbasket.ru/vol{volume}/part{part}/{value}/images/big/1.webp"
+    urls = [
+        f"https://basket-{basket}.wbbasket.ru/vol{volume}/part{part}/{value}/images/c516x688/1.webp",
+        f"https://basket-{basket}.wbbasket.ru/vol{volume}/part{part}/{value}/images/big/1.webp",
+    ]
+    for index in range(1, 31):
+        candidate = f"{index:02d}"
+        urls.append(f"https://basket-{candidate}.wbbasket.ru/vol{volume}/part{part}/{value}/images/c516x688/1.webp")
+    return list(dict.fromkeys(urls))
+
+
+def _action_run_rows() -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for run in sorted(_ACTION_RUNS, key=lambda item: item["started_at"], reverse=True):
+        proc = run.get("proc")
+        return_code = proc.poll() if proc is not None else None
+        if return_code is None:
+            status = "running"
+            error = ""
+        elif return_code == 0:
+            status = "ok"
+            error = ""
+        else:
+            status = "fail"
+            error = f"Процесс завершился с кодом {return_code}. Подробности в лог-файле job."
+        rows.append(
+            {
+                "job_name": run["title"],
+                "started_at": run["started_at"],
+                "finished_at": None if return_code is None else datetime.now().isoformat(),
+                "status": status,
+                "api_rows": None,
+                "raw_new": None,
+                "norm_upserted": None,
+                "duplicates": None,
+                "dup_pct": None,
+                "error": error,
+            }
+        )
+    return rows
 
 
 def get_overview() -> dict[str, Any]:
@@ -205,7 +244,7 @@ def get_overview() -> dict[str, Any]:
         db_status = {"ok": False, "error": str(exc)}
 
     jobs = get_jobs(since_hours=24, limit=500)
-    failed_jobs = [job for job in jobs if str(job.get("status", "")).lower() != "ok"]
+    failed_jobs = [job for job in jobs if str(job.get("status", "")).lower() not in {"ok", "running"}]
 
     return {
         "project": "DataBase_MP",
@@ -251,7 +290,8 @@ def get_jobs(*, limit: int = 20, since_hours: int | None = None) -> list[dict[st
         )
     except Exception as exc:
         return [{"job_name": "DB", "status": "error", "error": str(exc)}]
-    return [_jsonable_row(row) for row in rows]
+    action_rows = _action_run_rows()
+    return [_jsonable_row(row) for row in action_rows + rows]
 
 
 def get_secrets_status() -> dict[str, bool]:
@@ -297,23 +337,45 @@ def start_job_action(key: str) -> dict[str, Any]:
         cwd=str(PROJECT_ROOT),
         creationflags=creationflags,
     )
+    started_at = datetime.now().isoformat()
+    _ACTION_RUNS.append(
+        {
+            "job_id": job_id,
+            "key": key,
+            "title": action["title"],
+            "started_at": started_at,
+            "proc": proc,
+        }
+    )
+    del _ACTION_RUNS[:-30]
     return {
         "job_id": job_id,
         "key": key,
         "title": action["title"],
         "pid": proc.pid,
-        "started_at": datetime.now().isoformat(),
+        "started_at": started_at,
     }
 
 
-def get_orders_feed(*, marketplace: str, limit: int = 100) -> list[dict[str, Any]]:
-    limit = max(1, min(limit, 1000))
+def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
+    limit = max(1, min(limit, 100))
+    offset = max(0, offset)
     if marketplace == "ozon":
         rows = _db_fetch_all(
             """
+            WITH groups AS (
+                SELECT
+                    COALESCE(order_number, posting_number) AS order_group_key,
+                    MAX(COALESCE(in_process_at, created_at, updated_at)) AS sort_date
+                FROM staging.ozon_fbo_order_items_full
+                GROUP BY COALESCE(order_number, posting_number)
+                ORDER BY sort_date DESC NULLS LAST
+                LIMIT %s OFFSET %s
+            )
             SELECT
                 posting_number AS order_key,
                 order_number,
+                groups.order_group_key,
                 status,
                 substatus,
                 in_process_at AS order_date,
@@ -327,6 +389,8 @@ def get_orders_feed(*, marketplace: str, limit: int = 100) -> list[dict[str, Any
                 p.primary_image AS image_url,
                 staging.ozon_fbo_order_items_full.updated_at
             FROM staging.ozon_fbo_order_items_full
+            JOIN groups
+                ON groups.order_group_key = COALESCE(order_number, posting_number)
             LEFT JOIN LATERAL (
                 SELECT primary_image
                 FROM raw.ozon_product_info_items
@@ -335,23 +399,33 @@ def get_orders_feed(*, marketplace: str, limit: int = 100) -> list[dict[str, Any
                 LIMIT 1
             ) p ON TRUE
             ORDER BY COALESCE(in_process_at, created_at, updated_at) DESC NULLS LAST
-            LIMIT %s
             """,
-            (limit,),
+            (limit, offset),
         )
         result = []
         for row in rows:
             row["order_group_key"] = row.get("order_number") or row.get("order_key")
             row["status_label"] = _label_status("ozon", row.get("status"))
+            row["image_urls"] = [row.get("image_url")] if row.get("image_url") else []
             result.append(_jsonable_row({"marketplace": "Ozon", **row}))
         return result
 
     if marketplace == "wb":
         rows = _db_fetch_all(
             """
+            WITH groups AS (
+                SELECT
+                    COALESCE(g_number, srid) AS order_group_key,
+                    MAX(COALESCE(date_ts, last_change_ts)) AS sort_date
+                FROM wb_orders_norm
+                GROUP BY COALESCE(g_number, srid)
+                ORDER BY sort_date DESC NULLS LAST
+                LIMIT %s OFFSET %s
+            )
             SELECT
                 srid AS order_key,
                 g_number AS order_number,
+                groups.order_group_key,
                 CASE WHEN is_cancel THEN 'cancelled' ELSE 'active' END AS status,
                 NULL::text AS substatus,
                 date_ts AS order_date,
@@ -364,16 +438,19 @@ def get_orders_feed(*, marketplace: str, limit: int = 100) -> list[dict[str, Any
                 finished_price AS payout,
                 last_change_ts AS updated_at
             FROM wb_orders_norm
+            JOIN groups
+                ON groups.order_group_key = COALESCE(g_number, srid)
             ORDER BY COALESCE(date_ts, last_change_ts) DESC NULLS LAST
-            LIMIT %s
             """,
-            (limit,),
+            (limit, offset),
         )
         result = []
         for row in rows:
             row["order_group_key"] = row.get("order_number") or row.get("order_key")
             row["status_label"] = _label_status("wb", row.get("status"))
-            row["image_url"] = _wb_primary_image_url(row.get("marketplace_sku"))
+            image_urls = _wb_image_urls(row.get("marketplace_sku"))
+            row["image_url"] = image_urls[0] if image_urls else None
+            row["image_urls"] = image_urls
             result.append(_jsonable_row({"marketplace": "WB", **row}))
         return result
 

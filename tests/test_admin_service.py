@@ -3,7 +3,8 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from app.admin.service import get_job_actions, get_orders_feed, get_overview, start_job_action
+from app.admin import service
+from app.admin.service import get_job_actions, get_jobs, get_orders_feed, get_overview, start_job_action
 
 
 class AdminServiceTests(unittest.TestCase):
@@ -59,6 +60,8 @@ class AdminServiceTests(unittest.TestCase):
     def test_start_job_action_uses_allowlisted_script(self) -> None:
         class Proc:
             pid = 123
+            def poll(self):
+                return None
 
         with (
             patch("app.admin.service.Path.exists", return_value=True),
@@ -70,6 +73,26 @@ class AdminServiceTests(unittest.TestCase):
         self.assertEqual(result["pid"], 123)
         args = popen.call_args.args[0]
         self.assertIn("run_ozon_orders.cmd", str(args))
+
+    def test_started_job_action_is_visible_in_jobs(self) -> None:
+        class Proc:
+            pid = 321
+            def poll(self):
+                return None
+
+        service._ACTION_RUNS.clear()
+        self.addCleanup(service._ACTION_RUNS.clear)
+
+        with (
+            patch("app.admin.service.Path.exists", return_value=True),
+            patch("app.admin.service.subprocess.Popen", return_value=Proc()),
+            patch("app.admin.service._db_fetch_all", return_value=[]),
+        ):
+            start_job_action("source_files")
+            rows = get_jobs(since_hours=24, limit=20)
+
+        self.assertEqual(rows[0]["job_name"], "Файлы 1С")
+        self.assertEqual(rows[0]["status"], "running")
 
 
 if __name__ == "__main__":
