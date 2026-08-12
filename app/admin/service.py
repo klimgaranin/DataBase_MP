@@ -298,6 +298,60 @@ def get_secrets_status() -> dict[str, bool]:
     return secret_status(SENSITIVE_SECRET_NAMES)
 
 
+def get_orders_daily_summary(*, marketplace: str) -> dict[str, Any]:
+    if marketplace == "ozon":
+        row = _db_fetch_one(
+            """
+            WITH today_rows AS (
+                SELECT
+                    COALESCE(order_number, posting_number) AS order_group_key,
+                    product_offer_id AS article,
+                    product_quantity AS quantity,
+                    product_price_amount AS price,
+                    status
+                FROM staging.ozon_fbo_order_items_full
+                WHERE (COALESCE(in_process_at, created_at, updated_at) AT TIME ZONE 'Europe/Moscow')::date =
+                      (NOW() AT TIME ZONE 'Europe/Moscow')::date
+            )
+            SELECT
+                COUNT(DISTINCT order_group_key) AS orders_count,
+                COUNT(DISTINCT article) AS articles_count,
+                COALESCE(SUM(quantity), 0) AS quantity,
+                COALESCE(SUM(quantity * price), 0) AS amount,
+                COUNT(DISTINCT order_group_key) FILTER (WHERE status = 'cancelled') AS cancelled_orders_count
+            FROM today_rows
+            """
+        ) or {}
+        return _jsonable_row({"marketplace": "Ozon", **row})
+
+    if marketplace == "wb":
+        row = _db_fetch_one(
+            """
+            WITH today_rows AS (
+                SELECT
+                    COALESCE(g_number, srid) AS order_group_key,
+                    supplier_article AS article,
+                    1 AS quantity,
+                    price_with_disc AS price,
+                    is_cancel
+                FROM wb_orders_norm
+                WHERE (COALESCE(date_ts, last_change_ts) AT TIME ZONE 'Europe/Moscow')::date =
+                      (NOW() AT TIME ZONE 'Europe/Moscow')::date
+            )
+            SELECT
+                COUNT(DISTINCT order_group_key) AS orders_count,
+                COUNT(DISTINCT article) AS articles_count,
+                COALESCE(SUM(quantity), 0) AS quantity,
+                COALESCE(SUM(quantity * price), 0) AS amount,
+                COUNT(DISTINCT order_group_key) FILTER (WHERE is_cancel) AS cancelled_orders_count
+            FROM today_rows
+            """
+        ) or {}
+        return _jsonable_row({"marketplace": "WB", **row})
+
+    raise ValueError("marketplace должен быть wb или ozon")
+
+
 def get_job_actions() -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
     for key, action in JOB_ACTIONS.items():

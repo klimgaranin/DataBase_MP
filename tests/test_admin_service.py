@@ -4,7 +4,14 @@ import unittest
 from unittest.mock import patch
 
 from app.admin import service
-from app.admin.service import get_job_actions, get_jobs, get_orders_feed, get_overview, start_job_action
+from app.admin.service import (
+    get_job_actions,
+    get_jobs,
+    get_orders_daily_summary,
+    get_orders_feed,
+    get_overview,
+    start_job_action,
+)
 
 
 class AdminServiceTests(unittest.TestCase):
@@ -46,6 +53,23 @@ class AdminServiceTests(unittest.TestCase):
         self.assertEqual(items[0]["order_group_key"], "05932939-0033")
         self.assertEqual(items[0]["status_label"], "Доставлен")
         self.assertEqual(items[0]["image_url"], "https://example.test/image.jpg")
+
+    def test_orders_daily_summary_maps_marketplace(self) -> None:
+        with patch(
+            "app.admin.service._db_fetch_one",
+            return_value={
+                "orders_count": 3,
+                "articles_count": 2,
+                "quantity": 4,
+                "amount": 1200,
+                "cancelled_orders_count": 1,
+            },
+        ):
+            summary = get_orders_daily_summary(marketplace="ozon")
+
+        self.assertEqual(summary["marketplace"], "Ozon")
+        self.assertEqual(summary["orders_count"], 3)
+        self.assertEqual(summary["amount"], 1200)
 
     def test_job_actions_are_sanitized_for_ui(self) -> None:
         actions = get_job_actions()

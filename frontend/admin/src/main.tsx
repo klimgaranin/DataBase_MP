@@ -66,6 +66,15 @@ type OrderRow = {
   price?: number | string;
 };
 
+type OrdersSummary = {
+  marketplace?: string;
+  orders_count?: number | string;
+  articles_count?: number | string;
+  quantity?: number | string;
+  amount?: number | string;
+  cancelled_orders_count?: number | string;
+};
+
 type ProductGroup = {
   article: string;
   productName?: string;
@@ -213,6 +222,7 @@ function App() {
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [actions, setActions] = useState<JobAction[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
+  const [ordersSummary, setOrdersSummary] = useState<OrdersSummary | null>(null);
   const [ordersOffset, setOrdersOffset] = useState(0);
   const [ordersHasMore, setOrdersHasMore] = useState(true);
   const [ordersLoadingMore, setOrdersLoadingMore] = useState(false);
@@ -318,6 +328,17 @@ function App() {
     }
   }, [marketplace, ordersHasMore, ordersLoadingMore, ordersOffset, token]);
 
+  const loadOrdersSummary = useCallback(async () => {
+    if (!token) return;
+    try {
+      const data = await requestJson<OrdersSummary>(`/api/v1/admin/orders/summary?marketplace=${marketplace}`);
+      setOrdersSummary(data);
+    } catch (error) {
+      const text = error instanceof Error ? error.message : "Ошибка";
+      pushToast("Итоги дня не загрузились", text, "bad");
+    }
+  }, [marketplace, token]);
+
   async function runAction(action: JobAction) {
     setRunning((items) => new Set(items).add(action.key));
     try {
@@ -347,7 +368,10 @@ function App() {
 
   function refresh() {
     if (tab === "admin") void loadAdmin();
-    if (tab === "orders") void loadOrders({ reset: true });
+    if (tab === "orders") {
+      void loadOrders({ reset: true });
+      void loadOrdersSummary();
+    }
   }
 
   useEffect(() => {
@@ -370,12 +394,12 @@ function App() {
 
   const failedJobs = overview?.alerts?.failed_jobs || 0;
   const missingSecrets = overview?.alerts?.missing_required_secrets || [];
-  const orderGroups = groupOrders(orders);
   const orderStats = {
-    groups: orderGroups.length,
-    articles: new Set(orders.map((row) => row.article).filter(Boolean)).size,
-    quantity: orders.reduce((sum, row) => sum + asNumber(row.quantity), 0),
-    amount: orders.reduce((sum, row) => sum + asNumber(row.quantity) * asNumber(row.price), 0),
+    groups: asNumber(ordersSummary?.orders_count),
+    articles: asNumber(ordersSummary?.articles_count),
+    quantity: asNumber(ordersSummary?.quantity),
+    amount: asNumber(ordersSummary?.amount),
+    cancelled: asNumber(ordersSummary?.cancelled_orders_count),
   };
 
   return (
@@ -485,16 +509,16 @@ function App() {
                     <Segment active={marketplace === "ozon"} onClick={() => setMarketplace("ozon")}>Ozon</Segment>
                   </div>
                   <span className="rounded-full bg-white px-3 py-2 text-xs font-extrabold text-muted shadow-soft">
-                    Загружено: {orderStats.groups} заказов
+                    Загружено: {groupOrders(orders).length} заказов
                   </span>
                 </div>
                 <div className="mb-4 grid grid-cols-4 gap-3 max-[980px]:grid-cols-2 max-[560px]:grid-cols-1">
-                  <MiniStat label="Заказов" value={orderStats.groups} />
-                  <MiniStat label="Артикулов" value={orderStats.articles} />
-                  <MiniStat label="Штук" value={orderStats.quantity} />
-                  <MiniStat label="Сумма" value={formatMoney(orderStats.amount)} />
+                  <MiniStat label="Заказов сегодня" value={orderStats.groups} />
+                  <MiniStat label="Артикулов сегодня" value={orderStats.articles} />
+                  <MiniStat label="Штук сегодня" value={orderStats.quantity} />
+                  <MiniStat label="Сумма сегодня" value={formatMoney(orderStats.amount)} />
                 </div>
-                <Panel title="Лента заказов" subtitle={`Сгруппировано по заказам ${marketplace.toUpperCase()}`} action={<span className="grid h-8 min-w-10 place-items-center rounded-full bg-[#edf4fb] px-3 text-sm font-extrabold text-primary">{orderStats.groups}</span>}>
+                <Panel title="Лента заказов" subtitle={`Сгруппировано по заказам ${marketplace.toUpperCase()}`} action={<span className="grid h-8 min-w-10 place-items-center rounded-full bg-[#edf4fb] px-3 text-sm font-extrabold text-primary">{groupOrders(orders).length}</span>}>
                   <OrdersFeed
                     items={orders}
                     hasMore={ordersHasMore}
@@ -779,13 +803,22 @@ function ProductImage({ urls, name }: { urls: string[]; name?: string }) {
     );
   }
   return (
-    <img
-      src={src}
-      alt={name || "Фото товара"}
-      className="h-[72px] w-[72px] rounded-ui object-cover transition duration-200 hover:scale-[2.6] hover:shadow-panel hover:z-10 hover:relative"
-      loading="lazy"
-      onError={() => setIndex((current) => current + 1)}
-    />
+    <div className="group relative h-[72px] w-[72px]">
+      <img
+        src={src}
+        alt={name || "Фото товара"}
+        className="h-[72px] w-[72px] rounded-ui border border-[#e8eef4] bg-white object-contain p-1"
+        loading="lazy"
+        onError={() => setIndex((current) => current + 1)}
+      />
+      <div className="pointer-events-none absolute left-[82px] top-0 z-30 hidden h-[320px] w-[160px] rounded-ui border border-[#d9e0e7] bg-white p-2 shadow-panel group-hover:block max-[720px]:left-0 max-[720px]:top-[82px]">
+        <img
+          src={src}
+          alt={name || "Фото товара"}
+          className="h-full w-full rounded-md object-cover"
+        />
+      </div>
+    </div>
   );
 }
 
