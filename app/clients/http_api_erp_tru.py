@@ -11,6 +11,8 @@ from app.secrets import get_secret
 
 
 API_ERP_TRU_BASE_URL = "https://li1430-252.members.linode.com"
+API_ERP_TRU_FRONTEND_ORIGIN = "https://li1801-247.members.linode.com"
+AUTH_TOKEN_PATH = "/api/v1/auth/get-token/"
 PRODUCT_STATS_PATH = "/api/v1/product/stat_list/"
 
 
@@ -37,19 +39,65 @@ class ApiErpTruClient:
         timeout: int = 60,
         max_attempts: int = 5,
     ) -> None:
-        self.token = token if token is not None else get_secret("API_ERP_TRU_TOKEN")
+        self.token = token
         self.base_url = base_url.rstrip("/")
         self.session = session or requests.Session()
         self.timeout = timeout
         self.max_attempts = max(1, max_attempts)
-        if not self.token:
-            raise RuntimeError("API_ERP_TRU_TOKEN не задан")
+        self._username = get_secret("API_ERP_TRU_USERNAME") or get_secret("API_ERP_TRU_LOGIN")
+        self._password = get_secret("API_ERP_TRU_PASSWORD") or get_secret("API_ERP_TRU")
 
     def _headers(self) -> dict[str, str]:
+        token = self._access_token()
         return {
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": f"Bearer {token}",
             "Accept": "application/json, text/plain, */*",
         }
+
+    def _access_token(self) -> str:
+        if self.token:
+            return self.token
+        fallback_token = get_secret("API_ERP_TRU_TOKEN")
+        if self._username and self._password:
+            try:
+                self.token = self.request_access_token(username=self._username, password=self._password)
+                return self.token
+            except Exception:
+                if fallback_token:
+                    self.token = fallback_token
+                    return self.token
+                raise
+        if fallback_token:
+            self.token = fallback_token
+            return self.token
+        raise RuntimeError("API_ERP_TRU_USERNAME/API_ERP_TRU_PASSWORD или API_ERP_TRU_TOKEN не заданы")
+
+    def request_access_token(self, *, username: str, password: str) -> str:
+        url = self.base_url + AUTH_TOKEN_PATH
+        response = self.session.post(
+            url,
+            json={"username": username, "password": password},
+            headers={
+                "Accept": "application/json, text/plain, */*",
+                "Content-Type": "application/json",
+                "Origin": API_ERP_TRU_FRONTEND_ORIGIN,
+                "Referer": API_ERP_TRU_FRONTEND_ORIGIN + "/",
+                "User-Agent": "DataBase_MP/1.0 Python requests",
+            },
+            timeout=self.timeout,
+        )
+        try:
+            payload = response.json() if response.content else {}
+        except ValueError:
+            payload = {}
+        if response.status_code >= 400:
+            raise RuntimeError(f"ERP/TRU auth HTTP {response.status_code}: {response.text[:300]}")
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"ERP/TRU auth вернул не объект: {type(payload).__name__}")
+        access = payload.get("access")
+        if not isinstance(access, str) or not access.strip():
+            raise RuntimeError("ERP/TRU auth не вернул access token")
+        return access.strip()
 
     def request_product_stats(self, *, date_from: date, date_to: date, wo_sets: bool = False) -> tuple[list[dict[str, Any]], ApiErpTruResponseLog]:
         url = self.base_url + PRODUCT_STATS_PATH

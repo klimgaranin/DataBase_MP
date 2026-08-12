@@ -659,6 +659,19 @@ scripts\run_sheets_api_erp_tru_sales_export.cmd
 .\.venv\Scripts\python.exe -m app.cli sheets api-erp-tru-sales
 ```
 
+Эндпоинты ERP/TRU по документации Django API:
+
+| Назначение | Метод | Endpoint | Тело/параметры | Ответ |
+|------------|-------|----------|----------------|-------|
+| Получить JWT пару | `POST` | `/api/v1/auth/get-token/` | JSON `{"username": "...", "password": "..."}` | JSON `{"refresh": "...", "access": "..."}` |
+| Статистика товаров | `GET` | `/api/v1/product/stat_list/` | query `rel_products_in_order_for_product__order__delivery_DT_from`, `rel_products_in_order_for_product__order__delivery_DT_to`, `wo_sets` | JSON list строк статистики |
+
+Python-клиент `app/clients/http_api_erp_tru.py` сначала получает свежий
+`access` через `POST /api/v1/auth/get-token/`, затем отправляет его в
+`Authorization: Bearer <access>` при запросе статистики. Секреты для штатного
+режима: `API_ERP_TRU_USERNAME` и `API_ERP_TRU_PASSWORD`
+или `API_ERP_TRU`.
+
 `job_api_erp_tru_product_stats.py` читает
 `/api/v1/product/stat_list/` за период от такого же числа прошлого месяца до
 сегодня. Raw HTTP сохраняется в `raw.api_responses`, строки ответа — в
@@ -790,7 +803,10 @@ Credential Manager через `keyring`.
 | `SHEETS_OZON_PLACEMENT_EXPORT_LOG_FILE` | ❌  | `logs/job_sheets_ozon_placement_export.log` | Файл лога выгрузки Ozon хранения в Google Sheets |
 | `SHEETS_OZON_PLACEMENT_EXPORT_MODE` | ❌     | `replace`    | Режим обновления блока `DATA!K:O`     |
 | `SHEETS_OZON_PLACEMENT_EXPORT_DRY_RUN` | ❌  | `0`          | Проверить Sheets job без записи       |
-| `API_ERP_TRU_TOKEN`             | ✅ для ERP/TRU | —         | Секрет: Bearer token ERP/TRU API      |
+| `API_ERP_TRU_USERNAME`          | ✅ для ERP/TRU | —         | Секрет: имя пользователя ERP/TRU для получения access token |
+| `API_ERP_TRU`                   | ✅ для ERP/TRU | —         | Секрет: пароль ERP/TRU из Bitwarden-записи `DataBase_MP / API_ERP_TRU` |
+| `API_ERP_TRU_PASSWORD`          | ✅ для ERP/TRU | —         | Секрет: альтернативное имя пароля ERP/TRU |
+| `API_ERP_TRU_TOKEN`             | ⚠️ fallback ERP/TRU | —    | Секрет: готовый Bearer token ERP/TRU API, если логин/пароль не заданы |
 | `API_ERP_TRU_LOG_FILE`          | ❌           | `logs/job_api_erp_tru_product_stats.log` | Файл лога ERP/TRU product stats |
 | `API_ERP_TRU_DRY_RUN`           | ❌           | `0`          | Проверить ERP/TRU job без API/БД      |
 | `API_ERP_TRU_DATE_FROM`         | ❌           | такое же число прошлого месяца | Ручное начало периода ERP/TRU |
@@ -829,6 +845,31 @@ Credential Manager через `keyring`.
 токены и пароли с понятными названиями. В рабочий запуск проекта секреты
 переносятся из Bitwarden в Windows Credential Manager через команды ниже.
 
+### Быстро обновить протухший токен
+
+Штатный режим ERP/TRU теперь получает свежий Bearer token автоматически через
+`POST /api/v1/auth/get-token/` из логина и пароля. Для этого в Windows
+Credential Manager должны быть заданы:
+
+- `API_ERP_TRU_USERNAME`;
+- `API_ERP_TRU` или `API_ERP_TRU_PASSWORD`.
+
+Если по какой-то причине логин/пароль временно не работают, можно быстро
+обновить fallback Bearer token:
+
+```powershell
+cd C:\Програмирование\Проекты\DataBase_MP
+.\.venv\Scripts\python.exe -m app.cli secrets set API_ERP_TRU_TOKEN
+```
+
+Команда попросит вставить значение два раза и не покажет его на экране. После
+сообщения `API_ERP_TRU_TOKEN: сохранён в keyring` следующий запуск job уже
+использует новый fallback-токен. Перезапускать проект не нужно.
+
+Bitwarden после этого обновить для резервной копии и удобного хранения для
+человека: открыть нужную запись и положить новое значение именно в поле
+`Password / Пароль`.
+
 ### Bitwarden -> Windows Credential Manager
 
 Когда секрет создан или изменён в Bitwarden, его нужно подтянуть в рабочий
@@ -851,6 +892,11 @@ bw lock
 Команда берёт записи из папки Bitwarden `DataBase_MP` с именами вида
 `DataBase_MP / SECRET_NAME`, обновляет одноимённые секреты в keyring и не
 печатает значения.
+
+Важно: при чтении записи Bitwarden проект сначала берёт значение из основного
+поля `Password / Пароль`. Custom field или заметка используются только если
+основной пароль пустой. Поэтому для обычной работы новые токены и пароли
+кладём в `Password / Пароль`.
 
 ### Windows Credential Manager -> Bitwarden
 
@@ -903,7 +949,9 @@ PG_DSN=postgresql://app@localhost:5432/marketplace
 .\.venv\Scripts\python.exe -m app.cli secrets set WB_TOKEN
 ```
 
-Команда попросит вставить значение два раза и не покажет его на экране.
+Команда попросит вставить значение два раза и не покажет его на экране. Для
+ERP/TRU используется то же правило, только имя секрета другое:
+`API_ERP_TRU_TOKEN`.
 
 Значения секретов в интерфейсах и проверках должны показываться только как
 `задан` / `не задан`.
