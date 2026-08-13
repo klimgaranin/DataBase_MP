@@ -171,6 +171,21 @@ function asNumber(value?: number | string) {
   return Number.isFinite(number) ? number : 0;
 }
 
+function imageUrlsFromRow(row: OrderRow) {
+  const urls: string[] = [];
+  if (row.image_url) urls.push(row.image_url);
+  for (const url of row.image_urls || []) {
+    if (url && !urls.includes(url)) urls.push(url);
+  }
+  return urls;
+}
+
+function copyText(value?: string) {
+  const text = String(value || "").trim();
+  if (!text) return;
+  void navigator.clipboard?.writeText(text);
+}
+
 function statusTone(value?: string) {
   const text = String(value || "").toLowerCase();
   if (["ok", "success", "active", "delivered", "задан", "доставлен", "активный"].includes(text)) return "good";
@@ -237,7 +252,7 @@ function groupProducts(rows: OrderRow[]): ProductGroup[] {
       current.rows.push(row);
       current.totalQuantity += quantity;
       current.totalAmount += amount;
-      for (const url of row.image_urls || (row.image_url ? [row.image_url] : [])) {
+      for (const url of imageUrlsFromRow(row)) {
         if (url && !current.imageUrls.includes(url)) current.imageUrls.push(url);
       }
       continue;
@@ -245,7 +260,7 @@ function groupProducts(rows: OrderRow[]): ProductGroup[] {
     map.set(key, {
       article: key,
       productName: row.product_name,
-      imageUrls: row.image_urls || (row.image_url ? [row.image_url] : []),
+      imageUrls: imageUrlsFromRow(row),
       rows: [row],
       totalQuantity: quantity,
       totalAmount: amount,
@@ -964,10 +979,20 @@ function OrderProductRow({
     <div className="relative z-0 grid min-h-[132px] grid-cols-[104px_minmax(0,1fr)_auto] items-stretch gap-3 rounded-ui border border-[#edf1f5] bg-[#fbfcfd] p-3 transition hover:z-[120] max-[720px]:grid-cols-[104px_minmax(0,1fr)]">
       <ProductImage urls={product.imageUrls} name={product.productName} />
       <div className="min-w-0">
-        <div className="line-clamp-2 font-bold leading-snug">{product.productName || "Товар без названия"}</div>
+        <button
+          className="line-clamp-2 max-w-full text-left font-bold leading-snug text-ink transition hover:text-primary"
+          title="Скопировать артикул"
+          onClick={() => copyText(product.article)}
+        >
+          {product.article || "Без артикула"}
+        </button>
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
-          <span>Артикул: <strong className="text-ink">{product.article}</strong></span>
-          {orderLabel ? <span>Заказ: <strong className="text-ink">{orderLabel}</strong></span> : null}
+          {orderLabel ? (
+            <button className="transition hover:text-primary" title="Скопировать номер заказа" onClick={() => copyText(orderLabel)}>
+              Заказ: <strong className="text-ink">{orderLabel}</strong>
+            </button>
+          ) : null}
+          <span title={product.productName || ""}>Название: <strong className="text-ink">{product.productName || "Товар без названия"}</strong></span>
           <span>Строк: {product.rows.length}</span>
         </div>
         <CopyChips rows={product.rows} onOpenOrder={onOpenOrder} />
@@ -1003,7 +1028,7 @@ function CopyChips({
           <button
             className="grid w-7 place-items-center border-l border-[#dce4eb] transition hover:text-primary"
             title="Скопировать"
-            onClick={() => void navigator.clipboard?.writeText(key)}
+            onClick={() => copyText(key)}
           >
             <Clipboard size={12} />
           </button>

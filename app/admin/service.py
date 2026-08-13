@@ -201,6 +201,17 @@ def _image_url_list(value: Any) -> list[str]:
     return []
 
 
+def _ordered_image_urls(primary: Any, images: Any) -> list[str]:
+    urls: list[str] = []
+    primary_url = str(primary or "").strip()
+    if primary_url:
+        urls.append(primary_url)
+    for url in _image_url_list(images):
+        if url and url not in urls:
+            urls.append(url)
+    return urls
+
+
 def _wb_image_urls(nm_id: Any) -> list[str]:
     try:
         value = int(nm_id)
@@ -623,7 +634,7 @@ def get_order_detail(*, marketplace: str, key: str) -> dict[str, Any]:
                 financial_cluster_from,
                 financial_cluster_to,
                 product_offer_id AS article,
-                product_name,
+                COALESCE(card.product_name, staging.ozon_fbo_order_items_full.product_name) AS product_name,
                 product_sku AS marketplace_sku,
                 product_quantity AS quantity,
                 product_price_amount AS price,
@@ -635,7 +646,7 @@ def get_order_detail(*, marketplace: str, key: str) -> dict[str, Any]:
                 updated_at
             FROM staging.ozon_fbo_order_items_full
             LEFT JOIN LATERAL (
-                SELECT primary_image, images
+                SELECT primary_image, images, product_name
                 FROM staging.marketplace_product_cards_current
                 WHERE marketplace = 'ozon'
                   AND (
@@ -689,9 +700,7 @@ def get_order_detail(*, marketplace: str, key: str) -> dict[str, Any]:
             raw_payload = raw[0].get("payload") if raw else None
         for row in rows:
             row["status_label"] = _label_status("ozon", row.get("status"))
-            image_urls = _image_url_list(row.get("image_urls"))
-            if not image_urls and row.get("image_url"):
-                image_urls = [row.get("image_url")]
+            image_urls = _ordered_image_urls(row.get("image_url"), row.get("image_urls"))
             row["image_urls"] = image_urls
         for row in history:
             row["status_label"] = _label_status("ozon", row.get("status"))
@@ -726,7 +735,7 @@ def get_order_detail(*, marketplace: str, key: str) -> dict[str, Any]:
                 nm_id AS marketplace_sku,
                 barcode,
                 category,
-                subject AS product_name,
+                COALESCE(card.product_name, subject) AS product_name,
                 brand,
                 tech_size,
                 income_id,
@@ -741,7 +750,7 @@ def get_order_detail(*, marketplace: str, key: str) -> dict[str, Any]:
                 card.images AS image_urls
             FROM wb_orders_norm
             LEFT JOIN LATERAL (
-                SELECT primary_image, images
+                SELECT primary_image, images, product_name
                 FROM staging.marketplace_product_cards_current
                 WHERE marketplace = 'wb'
                   AND (
@@ -791,7 +800,7 @@ def get_order_detail(*, marketplace: str, key: str) -> dict[str, Any]:
             raw_payload = raw[0].get("payload") if raw else None
         for row in rows:
             row["status_label"] = _label_status("wb", row.get("status"))
-            image_urls = _image_url_list(row.get("image_urls"))
+            image_urls = _ordered_image_urls(row.get("image_url"), row.get("image_urls"))
             if not image_urls:
                 image_urls = _wb_image_urls(row.get("marketplace_sku"))
             row["image_url"] = row.get("image_url") or (image_urls[0] if image_urls else None)
@@ -835,7 +844,7 @@ def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> li
                 in_process_at AS order_date,
                 analytics_warehouse_name AS warehouse_name,
                 product_offer_id AS article,
-                product_name AS product_name,
+                COALESCE(card.product_name, staging.ozon_fbo_order_items_full.product_name) AS product_name,
                 product_sku AS marketplace_sku,
                 product_quantity AS quantity,
                 product_price_amount AS price,
@@ -847,7 +856,7 @@ def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> li
             JOIN groups
                 ON groups.order_group_key = COALESCE(order_number, posting_number)
             LEFT JOIN LATERAL (
-                SELECT primary_image, images
+                SELECT primary_image, images, product_name
                 FROM staging.marketplace_product_cards_current
                 WHERE marketplace = 'ozon'
                   AND (
@@ -865,9 +874,7 @@ def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> li
         for row in rows:
             row["order_group_key"] = row.get("order_number") or row.get("order_key")
             row["status_label"] = _label_status("ozon", row.get("status"))
-            image_urls = _image_url_list(row.get("image_urls"))
-            if not image_urls and row.get("image_url"):
-                image_urls = [row.get("image_url")]
+            image_urls = _ordered_image_urls(row.get("image_url"), row.get("image_urls"))
             row["image_urls"] = image_urls
             result.append(_jsonable_row({"marketplace": "Ozon", **row}))
         return result
@@ -893,7 +900,7 @@ def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> li
                 date_ts AS order_date,
                 warehouse_name,
                 supplier_article AS article,
-                subject AS product_name,
+                COALESCE(card.product_name, subject) AS product_name,
                 nm_id AS marketplace_sku,
                 1 AS quantity,
                 price_with_disc AS price,
@@ -905,7 +912,7 @@ def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> li
             JOIN groups
                 ON groups.order_group_key = COALESCE(g_number, srid)
             LEFT JOIN LATERAL (
-                SELECT primary_image, images
+                SELECT primary_image, images, product_name
                 FROM staging.marketplace_product_cards_current
                 WHERE marketplace = 'wb'
                   AND (
@@ -923,7 +930,7 @@ def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> li
         for row in rows:
             row["order_group_key"] = row.get("order_number") or row.get("order_key")
             row["status_label"] = _label_status("wb", row.get("status"))
-            image_urls = _image_url_list(row.get("image_urls"))
+            image_urls = _ordered_image_urls(row.get("image_url"), row.get("image_urls"))
             if not image_urls:
                 image_urls = _wb_image_urls(row.get("marketplace_sku"))
             row["image_url"] = row.get("image_url") or (image_urls[0] if image_urls else None)
