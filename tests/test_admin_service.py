@@ -76,6 +76,23 @@ class AdminServiceTests(unittest.TestCase):
             ["https://example.test/primary.jpg", "https://example.test/second.jpg"],
         )
 
+    def test_ozon_orders_feed_cleans_legacy_list_string_image(self) -> None:
+        row = {
+            "order_key": "123",
+            "order_number": "05932939-0033",
+            "status": "delivered",
+            "article": "A1",
+            "product_name": "Lamp",
+            "quantity": 1,
+            "price": 100,
+            "image_url": "['https://example.test/primary.jpg']",
+            "image_urls": ["https://example.test/second.jpg"],
+        }
+        with patch("app.admin.service._db_fetch_all", return_value=[row]):
+            items = get_orders_feed(marketplace="ozon", limit=10)
+
+        self.assertEqual(items[0]["image_urls"][0], "https://example.test/primary.jpg")
+
     def test_orders_daily_summary_maps_marketplace(self) -> None:
         with patch(
             "app.admin.service._db_fetch_one",

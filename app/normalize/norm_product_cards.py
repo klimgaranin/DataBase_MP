@@ -1,13 +1,44 @@
 from __future__ import annotations
 
+import ast
 from typing import Any
 
 from app.normalize.norm_ozon_stocks import normalize_product_info_item, parse_int
 
 
 def _text(value: Any) -> str | None:
+    if isinstance(value, list):
+        for item in value:
+            text = _text(item)
+            if text:
+                return text
+        return None
     text = str(value or "").strip()
     return text or None
+
+
+def _url_list(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = ast.literal_eval(text)
+            except (SyntaxError, ValueError):
+                parsed = None
+            if isinstance(parsed, list):
+                return _url_list(parsed)
+        return [text] if text else []
+    if isinstance(value, list):
+        urls: list[str] = []
+        for item in value:
+            url = _text(item)
+            if url and url not in urls:
+                urls.append(url)
+        return urls
+    url = _text(value)
+    return [url] if url else []
 
 
 def _photo_urls_from_wb(photos: Any) -> list[str]:
@@ -61,9 +92,10 @@ def normalize_ozon_product_card(row: dict[str, Any]) -> dict[str, Any] | None:
     normalized = normalize_product_info_item(row)
     if normalized is None:
         return None
-    images = row.get("images") if isinstance(row.get("images"), list) else []
-    image_urls = [url for url in (_text(item) for item in images) if url]
+    image_urls = _url_list(row.get("images"))
     primary = _text(row.get("primary_image")) or (image_urls[0] if image_urls else None)
+    if primary and primary not in image_urls:
+        image_urls = [primary, *image_urls]
     article = normalized.get("offer_id") or str(normalized["product_id"])
     return {
         **normalized,

@@ -52,6 +52,22 @@ class ProductCardsTests(unittest.TestCase):
         self.assertEqual(result["primary_image"], "https://img.test/main.jpg")
         self.assertEqual(result["images_count"], 2)
 
+    def test_normalize_ozon_product_card_accepts_primary_image_list(self) -> None:
+        row = {
+            "id": 1,
+            "offer_id": "OZ-1",
+            "sku": 987,
+            "name": "Лампа",
+            "primary_image": ["https://img.test/main.jpg"],
+            "images": ["https://img.test/second.jpg"],
+        }
+
+        result = normalize_ozon_product_card(row)
+
+        assert result is not None
+        self.assertEqual(result["primary_image"], "https://img.test/main.jpg")
+        self.assertEqual(result["images"][0], "https://img.test/main.jpg")
+
     def test_wb_content_iter_cards_uses_cursor(self) -> None:
         class Session:
             calls: list[dict] = []

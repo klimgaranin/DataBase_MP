@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ast
 import subprocess
 import sys
 import threading
@@ -191,10 +192,17 @@ def _image_url_list(value: Any) -> list[str]:
     if value in (None, ""):
         return []
     if isinstance(value, str):
+        text = value.strip()
         try:
-            parsed = json.loads(value)
+            parsed = json.loads(text)
         except json.JSONDecodeError:
-            return [value]
+            if text.startswith("[") and text.endswith("]"):
+                try:
+                    parsed = ast.literal_eval(text)
+                except (SyntaxError, ValueError):
+                    return [text]
+                return _image_url_list(parsed)
+            return [text]
         return _image_url_list(parsed)
     if isinstance(value, list):
         return [str(item) for item in value if item not in (None, "")]
@@ -203,7 +211,8 @@ def _image_url_list(value: Any) -> list[str]:
 
 def _ordered_image_urls(primary: Any, images: Any) -> list[str]:
     urls: list[str] = []
-    primary_url = str(primary or "").strip()
+    primary_urls = _image_url_list(primary)
+    primary_url = primary_urls[0] if primary_urls else ""
     if primary_url:
         urls.append(primary_url)
     for url in _image_url_list(images):
