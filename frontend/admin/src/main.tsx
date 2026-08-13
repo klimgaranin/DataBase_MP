@@ -979,20 +979,18 @@ function OrderProductRow({
     <div className="relative z-0 grid min-h-[132px] grid-cols-[104px_minmax(0,1fr)_auto] items-stretch gap-3 rounded-ui border border-[#edf1f5] bg-[#fbfcfd] p-3 transition hover:z-[120] max-[720px]:grid-cols-[104px_minmax(0,1fr)]">
       <ProductImage urls={product.imageUrls} name={product.productName} />
       <div className="min-w-0">
-        <button
-          className="line-clamp-2 max-w-full text-left font-bold leading-snug text-ink transition hover:text-primary"
-          title="Скопировать артикул"
-          onClick={() => copyText(product.article)}
-        >
-          {product.article || "Без артикула"}
-        </button>
+        <div className="line-clamp-2 font-bold leading-snug" title={product.productName || ""}>
+          {product.productName || "Товар без названия"}
+        </div>
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+          <button className="transition hover:text-primary" title="Скопировать артикул" onClick={() => copyText(product.article)}>
+            Артикул: <strong className="text-ink">{product.article || "Без артикула"}</strong>
+          </button>
           {orderLabel ? (
             <button className="transition hover:text-primary" title="Скопировать номер заказа" onClick={() => copyText(orderLabel)}>
               Заказ: <strong className="text-ink">{orderLabel}</strong>
             </button>
           ) : null}
-          <span title={product.productName || ""}>Название: <strong className="text-ink">{product.productName || "Товар без названия"}</strong></span>
           <span>Строк: {product.rows.length}</span>
         </div>
         <CopyChips rows={product.rows} onOpenOrder={onOpenOrder} />
