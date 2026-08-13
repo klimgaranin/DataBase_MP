@@ -2043,6 +2043,7 @@ def upsert_wb_content_cards(rows: list[dict[str, Any]], *, run_id: str) -> int:
                     photos = EXCLUDED.photos,
                     payload = EXCLUDED.payload,
                     source_run_id = EXCLUDED.source_run_id,
+                    fetched_at = EXCLUDED.fetched_at,
                     updated_at = NOW()
                 """,
                 values,
@@ -2092,6 +2093,7 @@ def upsert_marketplace_product_cards_current(rows: list[dict[str, Any]], *, run_
                     images_count = EXCLUDED.images_count,
                     payload = EXCLUDED.payload,
                     source_run_id = EXCLUDED.source_run_id,
+                    fetched_at = EXCLUDED.fetched_at,
                     updated_at = NOW()
                 """,
                 values,
