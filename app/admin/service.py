@@ -148,6 +148,12 @@ def _db_fetch_one(query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | 
 def _jsonable(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
+    if isinstance(value, list):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, tuple):
+        return [_jsonable(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _jsonable(item) for key, item in value.items()}
     return value
 
 
@@ -224,6 +230,7 @@ def _action_run_rows() -> list[dict[str, Any]]:
             rows.append(
                 {
                     "job_name": run["title"],
+                    "action_key": run.get("key"),
                     "started_at": run["started_at"],
                     "finished_at": run.get("finished_at"),
                     "status": run["status"],
@@ -251,6 +258,7 @@ def _action_run_rows() -> list[dict[str, Any]]:
         rows.append(
             {
                 "job_name": run["title"],
+                "action_key": run.get("key"),
                 "started_at": run["started_at"],
                 "finished_at": None if return_code is None else datetime.now().isoformat(),
                 "status": status,
@@ -263,6 +271,11 @@ def _action_run_rows() -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+def _action_key_for_job(job_name: Any) -> str | None:
+    key = JOB_RUN_ACTION_ALIASES.get(str(job_name or "").strip().lower())
+    return key if key in JOB_ACTIONS else None
 
 
 def get_overview() -> dict[str, Any]:
@@ -325,7 +338,12 @@ def get_jobs(*, limit: int = 20, since_hours: int | None = None) -> list[dict[st
     except Exception as exc:
         return [{"job_name": "DB", "status": "error", "error": str(exc)}]
     action_rows = _action_run_rows()
-    return [_jsonable_row(row) for row in action_rows + rows]
+    result = []
+    for row in action_rows + rows:
+        if not row.get("action_key"):
+            row["action_key"] = _action_key_for_job(row.get("job_name"))
+        result.append(_jsonable_row(row))
+    return result
 
 
 def get_secrets_status() -> dict[str, bool]:
@@ -535,6 +553,199 @@ def start_job_batch(scope: str) -> dict[str, Any]:
         "keys": keys,
         "status": "running",
     }
+
+
+def _safe_fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+    try:
+        return _db_fetch_all(query, params)
+    except Exception:
+        return []
+
+
+def get_order_detail(*, marketplace: str, key: str) -> dict[str, Any]:
+    clean_key = key.strip()
+    if not clean_key:
+        raise ValueError("Номер заказа не задан")
+
+    if marketplace == "ozon":
+        rows = _db_fetch_all(
+            """
+            SELECT
+                posting_number AS order_key,
+                order_number,
+                COALESCE(order_number, posting_number) AS order_group_key,
+                order_id,
+                status,
+                substatus,
+                cancel_reason_id,
+                cancel_reason,
+                cancellation_initiator,
+                cancellation_type,
+                created_at,
+                in_process_at,
+                shipment_date,
+                analytics_warehouse_id,
+                analytics_warehouse_name,
+                analytics_city,
+                analytics_delivery_type,
+                analytics_payment_type_group_name,
+                financial_cluster_from,
+                financial_cluster_to,
+                product_offer_id AS article,
+                product_name,
+                product_sku AS marketplace_sku,
+                product_quantity AS quantity,
+                product_price_amount AS price,
+                financial_payout AS payout,
+                financial_commission_amount,
+                financial_commission_percent,
+                updated_at
+            FROM staging.ozon_fbo_order_items_full
+            WHERE posting_number = %s
+               OR order_number = %s
+               OR COALESCE(order_number, posting_number) = %s
+            ORDER BY line_number
+            """,
+            (clean_key, clean_key, clean_key),
+        )
+        postings = sorted({str(row.get("order_key") or "") for row in rows if row.get("order_key")})
+        history: list[dict[str, Any]] = []
+        raw_payload: dict[str, Any] | None = None
+        if postings:
+            history = _safe_fetch_all(
+                """
+                SELECT
+                    posting_number AS order_key,
+                    changed_at,
+                    status,
+                    previous_status,
+                    status_changed,
+                    substatus,
+                    previous_substatus,
+                    substatus_changed,
+                    warehouse_name,
+                    previous_warehouse_name,
+                    warehouse_changed
+                FROM analytics.ozon_fbo_posting_change_history_flat
+                WHERE posting_number = ANY(%s)
+                ORDER BY changed_at DESC
+                LIMIT 30
+                """,
+                (postings,),
+            )
+            raw = _safe_fetch_all(
+                """
+                SELECT payload
+                FROM raw.ozon_fbo_postings
+                WHERE posting_number = %s
+                LIMIT 1
+                """,
+                (postings[0],),
+            )
+            raw_payload = raw[0].get("payload") if raw else None
+        for row in rows:
+            row["status_label"] = _label_status("ozon", row.get("status"))
+        for row in history:
+            row["status_label"] = _label_status("ozon", row.get("status"))
+            row["previous_status_label"] = _label_status("ozon", row.get("previous_status"))
+        return _jsonable_row(
+            {
+                "marketplace": "Ozon",
+                "key": clean_key,
+                "rows": rows,
+                "history": history,
+                "raw_payload": raw_payload,
+            }
+        )
+
+    if marketplace == "wb":
+        rows = _db_fetch_all(
+            """
+            SELECT
+                srid AS order_key,
+                g_number AS order_number,
+                COALESCE(g_number, srid) AS order_group_key,
+                CASE WHEN is_cancel THEN 'cancelled' ELSE 'active' END AS status,
+                is_cancel,
+                date_ts AS order_date,
+                last_change_ts,
+                warehouse_name,
+                warehouse_type,
+                country_name,
+                oblast_okrug_name,
+                region_name,
+                supplier_article AS article,
+                nm_id AS marketplace_sku,
+                barcode,
+                category,
+                subject AS product_name,
+                brand,
+                tech_size,
+                income_id,
+                total_price,
+                discount_percent,
+                spp,
+                finished_price,
+                price_with_disc AS price,
+                cancel_date,
+                sticker
+            FROM wb_orders_norm
+            WHERE srid = %s
+               OR g_number = %s
+               OR COALESCE(g_number, srid) = %s
+            ORDER BY COALESCE(date_ts, last_change_ts) DESC NULLS LAST
+            """,
+            (clean_key, clean_key, clean_key),
+        )
+        srids = sorted({str(row.get("order_key") or "") for row in rows if row.get("order_key")})
+        history: list[dict[str, Any]] = []
+        raw_payload: dict[str, Any] | None = None
+        if srids:
+            history = _safe_fetch_all(
+                """
+                SELECT
+                    srid AS order_key,
+                    changed_at,
+                    status,
+                    cancel_type,
+                    payload#>>'{warehouseName}' AS warehouse_name,
+                    payload#>>'{destinationCity}' AS destination_city
+                FROM raw.wb_order_feed_order_versions
+                WHERE srid = ANY(%s)
+                ORDER BY changed_at DESC
+                LIMIT 30
+                """,
+                (srids,),
+            )
+            raw = _safe_fetch_all(
+                """
+                SELECT payload
+                FROM wb_orders_raw_dedup
+                WHERE srid = %s
+                ORDER BY last_change_ts DESC
+                LIMIT 1
+                """,
+                (srids[0],),
+            )
+            raw_payload = raw[0].get("payload") if raw else None
+        for row in rows:
+            row["status_label"] = _label_status("wb", row.get("status"))
+            image_urls = _wb_image_urls(row.get("marketplace_sku"))
+            row["image_url"] = image_urls[0] if image_urls else None
+            row["image_urls"] = image_urls
+        for row in history:
+            row["status_label"] = _label_status("wb", row.get("status"))
+        return _jsonable_row(
+            {
+                "marketplace": "WB",
+                "key": clean_key,
+                "rows": rows,
+                "history": history,
+                "raw_payload": raw_payload,
+            }
+        )
+
+    raise ValueError("marketplace должен быть wb или ozon")
 
 
 def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:

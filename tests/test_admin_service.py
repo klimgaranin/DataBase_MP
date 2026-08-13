@@ -7,6 +7,7 @@ from app.admin import service
 from app.admin.service import (
     get_job_actions,
     get_jobs,
+    get_order_detail,
     get_orders_daily_summary,
     get_orders_feed,
     get_overview,
@@ -72,6 +73,29 @@ class AdminServiceTests(unittest.TestCase):
         self.assertEqual(summary["orders_count"], 3)
         self.assertEqual(summary["amount"], 1200)
 
+    def test_order_detail_maps_ozon_rows_and_history(self) -> None:
+        calls = [
+            [
+                {
+                    "order_key": "05932939-0033-1",
+                    "order_number": "05932939-0033",
+                    "status": "delivered",
+                    "article": "A1",
+                    "product_name": "Lamp",
+                    "quantity": 1,
+                    "price": 100,
+                }
+            ],
+            [{"order_key": "05932939-0033-1", "status": "delivered"}],
+            [{"payload": {"posting_number": "05932939-0033-1"}}],
+        ]
+        with patch("app.admin.service._db_fetch_all", side_effect=calls):
+            detail = get_order_detail(marketplace="ozon", key="05932939-0033")
+
+        self.assertEqual(detail["marketplace"], "Ozon")
+        self.assertEqual(detail["rows"][0]["status_label"], "Доставлен")
+        self.assertEqual(detail["history"][0]["status_label"], "Доставлен")
+
     def test_job_actions_are_sanitized_for_ui(self) -> None:
         actions = get_job_actions()
 
@@ -118,6 +142,22 @@ class AdminServiceTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["job_name"], "Файлы 1С")
         self.assertEqual(rows[0]["status"], "running")
+
+    def test_job_rows_include_action_key(self) -> None:
+        with patch(
+            "app.admin.service._db_fetch_all",
+            return_value=[
+                {
+                    "job_name": "ozon_orders",
+                    "status": "fail",
+                    "started_at": "2026-08-13T10:00:00",
+                    "error": "boom",
+                }
+            ],
+        ):
+            rows = get_jobs(since_hours=24, limit=20)
+
+        self.assertEqual(rows[0]["action_key"], "ozon_orders")
 
     def test_start_failed_batch_skips_when_no_failed_jobs(self) -> None:
         with patch("app.admin.service._db_fetch_all", return_value=[]):

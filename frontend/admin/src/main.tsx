@@ -15,8 +15,10 @@ import {
   Play,
   RefreshCw,
   Save,
+  Search,
   Server,
   ShieldAlert,
+  X,
 } from "lucide-react";
 import "./styles.css";
 
@@ -25,13 +27,17 @@ type Marketplace = "wb" | "ozon";
 
 type JobRun = {
   job_name?: string;
+  action_key?: string | null;
   started_at?: string;
+  finished_at?: string | null;
   status?: string;
   api_rows?: number | string | null;
   norm_upserted?: number | string | null;
   duplicates?: number | string | null;
   error?: string | null;
 };
+
+type JobFilter = "all" | "bad" | "running" | "ok";
 
 type AdminOverview = {
   db?: { ok?: boolean; dsn?: string };
@@ -70,6 +76,34 @@ type OrderRow = {
   image_urls?: string[];
   quantity?: number | string;
   price?: number | string;
+  payout?: number | string;
+  substatus?: string | null;
+};
+
+type OrderHistoryRow = {
+  order_key?: string;
+  changed_at?: string;
+  status?: string;
+  status_label?: string;
+  previous_status?: string;
+  previous_status_label?: string;
+  substatus?: string;
+  previous_substatus?: string;
+  warehouse_name?: string;
+  previous_warehouse_name?: string;
+  cancel_type?: string;
+  destination_city?: string;
+  status_changed?: boolean;
+  substatus_changed?: boolean;
+  warehouse_changed?: boolean;
+};
+
+type OrderDetail = {
+  marketplace?: string;
+  key?: string;
+  rows?: Array<OrderRow & Record<string, unknown>>;
+  history?: OrderHistoryRow[];
+  raw_payload?: Record<string, unknown> | null;
 };
 
 type OrdersSummary = {
@@ -229,6 +263,9 @@ function App() {
   const [actions, setActions] = useState<JobAction[]>([]);
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [ordersSummary, setOrdersSummary] = useState<OrdersSummary | null>(null);
+  const [selectedOrder, setSelectedOrder] = useState<{ marketplace: Marketplace; key: string } | null>(null);
+  const [orderDetail, setOrderDetail] = useState<OrderDetail | null>(null);
+  const [orderDetailLoading, setOrderDetailLoading] = useState(false);
   const [ordersOffset, setOrdersOffset] = useState(0);
   const [ordersHasMore, setOrdersHasMore] = useState(true);
   const [ordersLoadingMore, setOrdersLoadingMore] = useState(false);
@@ -420,6 +457,14 @@ function App() {
     return () => observer.disconnect();
   }, [loadOrders, tab]);
 
+  useEffect(() => {
+    if (tab !== "admin") return undefined;
+    const hasRunningJobs = (overview?.jobs || []).some((job) => String(job.status || "").toLowerCase() === "running");
+    if (!hasRunningJobs) return undefined;
+    const interval = window.setInterval(() => void loadAdmin(), 5000);
+    return () => window.clearInterval(interval);
+  }, [overview?.jobs, tab]);
+
   const failedJobs = overview?.alerts?.failed_jobs || 0;
   const missingSecrets = overview?.alerts?.missing_required_secrets || [];
   const orderStats = {
@@ -429,6 +474,22 @@ function App() {
     amount: asNumber(ordersSummary?.amount),
     cancelled: asNumber(ordersSummary?.cancelled_orders_count),
   };
+
+  async function openOrderDetail(target: { marketplace: Marketplace; key: string }) {
+    setSelectedOrder(target);
+    setOrderDetailLoading(true);
+    setOrderDetail(null);
+    try {
+      const data = await requestJson<OrderDetail>(
+        `/api/v1/admin/orders/detail?marketplace=${target.marketplace}&key=${encodeURIComponent(target.key)}`,
+      );
+      setOrderDetail(data);
+    } catch (error) {
+      pushToast("Заказ не загрузился", error instanceof Error ? error.message : "Ошибка", "bad");
+    } finally {
+      setOrderDetailLoading(false);
+    }
+  }
 
   return (
     <div className="min-h-screen bg-[#f4f6f8] text-ink">
@@ -532,7 +593,13 @@ function App() {
                 </Panel>
 
                 <Panel title="Последние запуски" subtitle="За последние 24 часа">
-                  <JobsTable items={overview?.jobs || []} />
+                  <JobsTable
+                    items={overview?.jobs || []}
+                    onRunAction={(key) => {
+                      const action = actions.find((item) => item.key === key);
+                      if (action) void runAction(action);
+                    }}
+                  />
                 </Panel>
 
                 <Panel title="Секреты" subtitle="Только статус">
@@ -558,10 +625,12 @@ function App() {
                 </div>
                 <Panel title="Лента заказов" subtitle={`Сгруппировано по заказам ${marketplace.toUpperCase()}`} action={<span className="grid h-8 min-w-10 place-items-center rounded-full bg-[#edf4fb] px-3 text-sm font-extrabold text-primary">{groupOrders(orders).length}</span>}>
                   <OrdersFeed
+                    marketplace={marketplace}
                     items={orders}
                     hasMore={ordersHasMore}
                     loadingMore={ordersLoadingMore}
                     sentinelRef={ordersSentinelRef}
+                    onOpenOrder={(key) => void openOrderDetail({ marketplace, key })}
                   />
                 </Panel>
               </motion.section>
@@ -589,6 +658,16 @@ function App() {
           ))}
         </AnimatePresence>
       </div>
+
+      <OrderDetailModal
+        selected={selectedOrder}
+        detail={orderDetail}
+        loading={orderDetailLoading}
+        onClose={() => {
+          setSelectedOrder(null);
+          setOrderDetail(null);
+        }}
+      />
     </div>
   );
 }
@@ -705,42 +784,96 @@ function ActionCard({ action, running, onRun }: { action: JobAction; running: bo
   );
 }
 
-function JobsTable({ items }: { items: JobRun[] }) {
+function JobsTable({ items, onRunAction }: { items: JobRun[]; onRunAction: (key: string) => void }) {
+  const [filter, setFilter] = useState<JobFilter>("all");
+  const [query, setQuery] = useState("");
+  const filteredItems = items.filter((job) => {
+    const status = String(job.status || "").toLowerCase();
+    const isBad = !["ok", "running"].includes(status);
+    const matchesFilter =
+      filter === "all" ||
+      (filter === "bad" && isBad) ||
+      (filter === "running" && status === "running") ||
+      (filter === "ok" && status === "ok");
+    const text = `${job.job_name || ""} ${job.status || ""} ${job.error || ""}`.toLowerCase();
+    return matchesFilter && text.includes(query.trim().toLowerCase());
+  });
   return (
-    <div className="max-h-[min(680px,62vh)] overflow-auto">
-      <table className="min-w-[860px] w-full border-collapse">
-        <thead>
-          <tr>
-            <TableHead>Job</TableHead>
-            <TableHead>Статус</TableHead>
-            <TableHead>Старт</TableHead>
-            <TableHead>API</TableHead>
-            <TableHead>Норм.</TableHead>
-            <TableHead>Дубли</TableHead>
-          </tr>
-        </thead>
-        <tbody>
-          {items.length ? items.map((job, index) => (
-            <React.Fragment key={`${job.job_name}-${job.started_at}-${index}`}>
-              <tr className="transition hover:bg-slate-50">
-                <TableCell><strong>{job.job_name || "-"}</strong></TableCell>
-                <TableCell><StatusPill value={job.status} /></TableCell>
-                <TableCell>{formatDate(job.started_at)}</TableCell>
-                <TableCell>{job.api_rows ?? "-"}</TableCell>
-                <TableCell>{job.norm_upserted ?? "-"}</TableCell>
-                <TableCell>{job.duplicates ?? "-"}</TableCell>
-              </tr>
-              {job.error ? (
-                <tr>
-                  <td className="border-b border-slate-100 bg-[#fff8e6] px-3 py-2 text-sm text-[#7a4f12]" colSpan={6}>
-                    <strong>Ошибка:</strong> {job.error}
-                  </td>
+    <div>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-3">
+        <div className="inline-flex rounded-ui border border-line bg-white p-1">
+          {(["all", "bad", "running", "ok"] as JobFilter[]).map((item) => (
+            <button
+              key={item}
+              className={cls(
+                "h-8 rounded-md px-3 text-xs font-extrabold transition hover:bg-slate-50",
+                filter === item ? "bg-primary text-white hover:bg-primary" : "text-muted",
+              )}
+              onClick={() => setFilter(item)}
+            >
+              {item === "all" ? "Все" : item === "bad" ? "Ошибки" : item === "running" ? "В работе" : "OK"}
+            </button>
+          ))}
+        </div>
+        <label className="grid h-9 min-w-[240px] grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-ui border border-line bg-white px-3 text-muted">
+          <Search size={16} />
+          <input
+            className="min-w-0 bg-transparent text-sm text-ink outline-none"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Найти job или ошибку"
+          />
+        </label>
+      </div>
+      <div className="max-h-[min(680px,62vh)] overflow-auto">
+        <table className="min-w-[980px] w-full border-collapse">
+          <thead>
+            <tr>
+              <TableHead>Job</TableHead>
+              <TableHead>Статус</TableHead>
+              <TableHead>Старт</TableHead>
+              <TableHead>Финиш</TableHead>
+              <TableHead>API</TableHead>
+              <TableHead>Норм.</TableHead>
+              <TableHead>Дубли</TableHead>
+              <TableHead> </TableHead>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredItems.length ? filteredItems.map((job, index) => (
+              <React.Fragment key={`${job.job_name}-${job.started_at}-${index}`}>
+                <tr className="transition hover:bg-slate-50">
+                  <TableCell><strong>{job.job_name || "-"}</strong></TableCell>
+                  <TableCell><StatusPill value={job.status} /></TableCell>
+                  <TableCell>{formatDate(job.started_at)}</TableCell>
+                  <TableCell>{formatDate(job.finished_at || undefined)}</TableCell>
+                  <TableCell>{job.api_rows ?? "-"}</TableCell>
+                  <TableCell>{job.norm_upserted ?? "-"}</TableCell>
+                  <TableCell>{job.duplicates ?? "-"}</TableCell>
+                  <TableCell>
+                    {job.action_key ? (
+                      <button
+                        className="inline-flex h-8 items-center gap-1 rounded-md border border-[#dce4eb] bg-white px-2 text-xs font-bold text-muted transition hover:border-primary hover:text-primary"
+                        onClick={() => onRunAction(String(job.action_key))}
+                      >
+                        <Play size={13} />
+                        <span>Запуск</span>
+                      </button>
+                    ) : null}
+                  </TableCell>
                 </tr>
-              ) : null}
-            </React.Fragment>
-          )) : <tr><td className="empty-cell" colSpan={6}>Запусков пока нет</td></tr>}
-        </tbody>
-      </table>
+                {job.error ? (
+                  <tr>
+                    <td className="border-b border-slate-100 bg-[#fff8e6] px-3 py-2 text-sm text-[#7a4f12]" colSpan={8}>
+                      <strong>Ошибка:</strong> {job.error}
+                    </td>
+                  </tr>
+                ) : null}
+              </React.Fragment>
+            )) : <tr><td className="empty-cell" colSpan={8}>Запусков по фильтру нет</td></tr>}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -760,15 +893,19 @@ function SecretsList({ items }: { items: Record<string, boolean> }) {
 }
 
 function OrdersFeed({
+  marketplace,
   items,
   hasMore,
   loadingMore,
   sentinelRef,
+  onOpenOrder,
 }: {
+  marketplace: Marketplace;
   items: OrderRow[];
   hasMore: boolean;
   loadingMore: boolean;
   sentinelRef: React.RefObject<HTMLDivElement | null>;
+  onOpenOrder: (key: string) => void;
 }) {
   const groups = groupOrders(items);
   return (
@@ -778,7 +915,7 @@ function OrdersFeed({
           {groups.map((group) => (
             <motion.article
               key={group.key}
-              className="rounded-ui border border-line bg-white p-4 transition hover:border-[#b8c7d8] hover:shadow-soft"
+              className="relative z-0 rounded-ui border border-line bg-white p-4 transition hover:z-30 hover:border-[#b8c7d8] hover:shadow-soft"
               whileHover={{ y: -2 }}
             >
               <div className="mb-3 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-4 max-[820px]:grid-cols-1">
@@ -798,7 +935,7 @@ function OrdersFeed({
 
               <div className="grid gap-2">
                 {groupProducts(group.rows).map((product) => (
-                  <OrderProductRow key={product.article} product={product} />
+                  <OrderProductRow key={product.article} product={product} marketplace={marketplace} onOpenOrder={onOpenOrder} />
                 ))}
               </div>
             </motion.article>
@@ -812,11 +949,19 @@ function OrdersFeed({
   );
 }
 
-function OrderProductRow({ product }: { product: ProductGroup }) {
+function OrderProductRow({
+  product,
+  marketplace,
+  onOpenOrder,
+}: {
+  product: ProductGroup;
+  marketplace: Marketplace;
+  onOpenOrder: (key: string) => void;
+}) {
   const firstOrderKey = product.rows.find((row) => row.order_group_key || row.order_number || row.order_key);
   const orderLabel = firstOrderKey?.order_group_key || firstOrderKey?.order_number || firstOrderKey?.order_key;
   return (
-    <div className="grid min-h-[132px] grid-cols-[104px_minmax(0,1fr)_auto] items-stretch gap-3 rounded-ui border border-[#edf1f5] bg-[#fbfcfd] p-3 max-[720px]:grid-cols-[104px_minmax(0,1fr)]">
+    <div className="relative z-0 grid min-h-[132px] grid-cols-[104px_minmax(0,1fr)_auto] items-stretch gap-3 rounded-ui border border-[#edf1f5] bg-[#fbfcfd] p-3 transition hover:z-[120] max-[720px]:grid-cols-[104px_minmax(0,1fr)]">
       <ProductImage urls={product.imageUrls} name={product.productName} />
       <div className="min-w-0">
         <div className="line-clamp-2 font-bold leading-snug">{product.productName || "Товар без названия"}</div>
@@ -825,7 +970,7 @@ function OrderProductRow({ product }: { product: ProductGroup }) {
           {orderLabel ? <span>Заказ: <strong className="text-ink">{orderLabel}</strong></span> : null}
           <span>Строк: {product.rows.length}</span>
         </div>
-        <CopyChips rows={product.rows} />
+        <CopyChips rows={product.rows} onOpenOrder={onOpenOrder} />
       </div>
       <div className="text-right max-[720px]:col-span-2 max-[720px]:text-left">
         <div className="font-extrabold">{product.totalQuantity} шт</div>
@@ -835,21 +980,34 @@ function OrderProductRow({ product }: { product: ProductGroup }) {
   );
 }
 
-function CopyChips({ rows }: { rows: OrderRow[] }) {
+function CopyChips({
+  rows,
+  onOpenOrder,
+}: {
+  rows: OrderRow[];
+  onOpenOrder: (key: string) => void;
+}) {
   const uniqueKeys = Array.from(new Set(rows.map((row) => row.order_key).filter(Boolean))) as string[];
   if (!uniqueKeys.length) return null;
   return (
     <div className="mt-2 flex flex-wrap gap-1.5">
       {uniqueKeys.map((key) => (
-        <button
-          key={key}
-          className="inline-flex max-w-full items-center gap-1 rounded-md border border-[#dce4eb] bg-white px-2 py-1 text-xs font-bold text-muted transition hover:border-primary hover:text-primary"
-          title="Скопировать"
-          onClick={() => void navigator.clipboard?.writeText(key)}
-        >
-          <Clipboard size={12} />
-          <span className="truncate">{key}</span>
-        </button>
+        <span key={key} className="inline-flex max-w-full overflow-hidden rounded-md border border-[#dce4eb] bg-white text-xs font-bold text-muted transition hover:border-primary">
+          <button
+            className="min-w-0 px-2 py-1 transition hover:text-primary"
+            title="Открыть детали заказа"
+            onClick={() => onOpenOrder(key)}
+          >
+            <span className="truncate">{key}</span>
+          </button>
+          <button
+            className="grid w-7 place-items-center border-l border-[#dce4eb] transition hover:text-primary"
+            title="Скопировать"
+            onClick={() => void navigator.clipboard?.writeText(key)}
+          >
+            <Clipboard size={12} />
+          </button>
+        </span>
       ))}
     </div>
   );
@@ -890,13 +1048,156 @@ function ProductImage({ urls, name }: { urls: string[]; name?: string }) {
         loading="lazy"
         onError={handleImageError}
       />
-      <div className="pointer-events-none absolute left-[116px] top-0 z-30 hidden h-[344px] w-[258px] rounded-ui border border-[#d9e0e7] bg-white p-2 shadow-panel group-hover:block max-[720px]:left-0 max-[720px]:top-[118px]">
+      <div className="pointer-events-none absolute left-[116px] top-0 z-[999] hidden h-[344px] w-[258px] rounded-ui border border-[#d9e0e7] bg-white p-2 shadow-panel group-hover:block max-[720px]:left-0 max-[720px]:top-[118px]">
         <img
           src={retrySrc}
           alt={name || "Фото товара"}
           className="h-full w-full rounded-md object-cover"
         />
       </div>
+    </div>
+  );
+}
+
+function OrderDetailModal({
+  selected,
+  detail,
+  loading,
+  onClose,
+}: {
+  selected: { marketplace: Marketplace; key: string } | null;
+  detail: OrderDetail | null;
+  loading: boolean;
+  onClose: () => void;
+}) {
+  if (!selected) return null;
+  const rows = detail?.rows || [];
+  const first = rows[0] || {};
+  const history = detail?.history || [];
+  return (
+    <div className="fixed inset-0 z-[200] grid place-items-center bg-[#0f1720]/45 p-5 backdrop-blur-sm" onClick={onClose}>
+      <motion.section
+        className="max-h-[92vh] w-[min(980px,100%)] overflow-hidden rounded-ui bg-white shadow-panel"
+        initial={{ opacity: 0, scale: 0.98, y: 12 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
+          <div className="min-w-0">
+            <div className="mb-1 text-xs font-extrabold uppercase text-primary">{selected.marketplace.toUpperCase()}</div>
+            <h2 className="break-words text-2xl font-black leading-tight">{selected.key}</h2>
+            <div className="mt-1 text-sm text-muted">
+              {String(first.product_name || "Заказ")} · {String(first.warehouse_name || first.analytics_warehouse_name || "Склад не указан")}
+            </div>
+          </div>
+          <button className="grid h-10 w-10 place-items-center rounded-ui bg-slate-100 text-muted transition hover:bg-white hover:shadow-soft" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="max-h-[calc(92vh-86px)] overflow-auto p-5">
+          {loading ? (
+            <div className="grid min-h-[220px] place-items-center text-muted">
+              <RefreshCw size={22} className="animate-spin" />
+            </div>
+          ) : (
+            <div className="grid gap-5">
+              <div className="grid grid-cols-4 gap-3 max-[880px]:grid-cols-2 max-[560px]:grid-cols-1">
+                <MiniStat label="Строк" value={rows.length} />
+                <MiniStat label="Статус" value={String(first.status_label || first.status || "-")} />
+                <MiniStat label="Кол-во" value={rows.reduce((sum, row) => sum + asNumber(row.quantity), 0)} />
+                <MiniStat label="Сумма" value={formatMoney(rows.reduce((sum, row) => sum + asNumber(row.quantity) * asNumber(row.price), 0))} />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4 max-[880px]:grid-cols-1">
+                <DetailPanel title="Отгрузка и доставка">
+                  <DetailLine label="Склад" value={first.warehouse_name || first.analytics_warehouse_name} />
+                  <DetailLine label="Тип доставки" value={first.analytics_delivery_type || first.warehouse_type} />
+                  <DetailLine label="Город" value={first.analytics_city || first.region_name} />
+                  <DetailLine label="Кластер из" value={first.financial_cluster_from} />
+                  <DetailLine label="Кластер в" value={first.financial_cluster_to} />
+                </DetailPanel>
+                <DetailPanel title="Отмена">
+                  <DetailLine label="Причина" value={first.cancel_reason || first.cancel_type || first.cancellation_type} />
+                  <DetailLine label="Инициатор" value={first.cancellation_initiator} />
+                  <DetailLine label="Дата отмены" value={formatDate(String(first.cancel_date || ""))} />
+                  <DetailLine label="Подстатус" value={first.substatus} />
+                </DetailPanel>
+              </div>
+
+              <DetailPanel title="Товары">
+                <div className="overflow-auto">
+                  <table className="min-w-[760px] w-full border-collapse">
+                    <thead>
+                      <tr>
+                        <TableHead>Артикул</TableHead>
+                        <TableHead>Название</TableHead>
+                        <TableHead>SKU/NM</TableHead>
+                        <TableHead>Кол-во</TableHead>
+                        <TableHead>Цена</TableHead>
+                        <TableHead>Выплата</TableHead>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((row, index) => (
+                        <tr key={`${row.order_key}-${row.article}-${index}`} className="transition hover:bg-slate-50">
+                          <TableCell><strong>{String(row.article || "-")}</strong></TableCell>
+                          <TableCell>{String(row.product_name || "-")}</TableCell>
+                          <TableCell>{String(row.marketplace_sku || "-")}</TableCell>
+                          <TableCell>{row.quantity ?? "-"}</TableCell>
+                          <TableCell>{formatMoney(row.price)}</TableCell>
+                          <TableCell>{formatMoney(row.payout)}</TableCell>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </DetailPanel>
+
+              <DetailPanel title="История">
+                {history.length ? (
+                  <div className="grid gap-2">
+                    {history.map((item, index) => (
+                      <div key={`${item.order_key}-${item.changed_at}-${index}`} className="rounded-ui border border-slate-100 bg-[#fbfcfd] px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <StatusPill value={item.status_label || item.status} />
+                          <span className="text-sm text-muted">{formatDate(item.changed_at)}</span>
+                        </div>
+                        <div className="mt-1 text-sm text-muted">
+                          {item.previous_status || item.previous_status_label ? `Было: ${item.previous_status_label || item.previous_status}. ` : ""}
+                          {item.warehouse_name ? `Склад: ${item.warehouse_name}. ` : ""}
+                          {item.destination_city ? `Город: ${item.destination_city}. ` : ""}
+                          {item.cancel_type ? `Отмена: ${item.cancel_type}.` : ""}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted">История изменений пока не найдена.</div>
+                )}
+              </DetailPanel>
+            </div>
+          )}
+        </div>
+      </motion.section>
+    </div>
+  );
+}
+
+function DetailPanel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="rounded-ui border border-slate-100 bg-white p-4">
+      <h3 className="mb-3 text-sm font-extrabold uppercase text-muted">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function DetailLine({ label, value }: { label: string; value: unknown }) {
+  return (
+    <div className="grid grid-cols-[150px_minmax(0,1fr)] gap-3 border-b border-slate-100 py-2 text-sm last:border-b-0">
+      <span className="font-bold text-muted">{label}</span>
+      <span className="min-w-0 break-words">{value ? String(value) : "-"}</span>
     </div>
   );
 }

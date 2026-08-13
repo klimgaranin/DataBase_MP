@@ -182,6 +182,16 @@ def admin_orders_summary(marketplace: str = "wb", _auth: str = Depends(_verify_t
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+@app.get("/api/v1/admin/orders/detail")
+def admin_order_detail(marketplace: str = "wb", key: str = "", _auth: str = Depends(_verify_token)):
+    from app.admin.service import get_order_detail
+
+    try:
+        return get_order_detail(marketplace=marketplace.lower(), key=key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @app.get("/api/v1/admin/actions")
 def admin_actions(_auth: str = Depends(_verify_token)):
     from app.admin.service import get_job_actions
