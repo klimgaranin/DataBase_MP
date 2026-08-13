@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import threading
@@ -59,6 +60,13 @@ JOB_ACTIONS: dict[str, dict[str, str]] = {
         "marketplace": "WB",
         "group": "База",
     },
+    "wb_product_cards": {
+        "title": "WB карточки",
+        "description": "Обновить карточки WB и официальные ссылки на фото.",
+        "script": "scripts/run_wb_product_cards.cmd",
+        "marketplace": "WB",
+        "group": "База",
+    },
     "ozon_orders": {
         "title": "Ozon FBO заказы",
         "description": "Обновить FBO отправления Ozon и историю изменений.",
@@ -70,6 +78,13 @@ JOB_ACTIONS: dict[str, dict[str, str]] = {
         "title": "Ozon остатки",
         "description": "Обновить товары и остатки Ozon.",
         "script": "scripts/run_ozon_stocks.cmd",
+        "marketplace": "Ozon",
+        "group": "База",
+    },
+    "ozon_product_cards": {
+        "title": "Ozon карточки",
+        "description": "Обновить карточки Ozon и официальные ссылки на фото.",
+        "script": "scripts/run_ozon_product_cards.cmd",
         "marketplace": "Ozon",
         "group": "База",
     },
@@ -113,8 +128,10 @@ JOB_ACTIONS: dict[str, dict[str, str]] = {
 JOB_RUN_ACTION_ALIASES = {
     "wb_orders": "wb_orders",
     "wb_order_feed": "wb_order_feed",
+    "wb_product_cards": "wb_product_cards",
     "wb_stocks": "wb_stocks",
     "ozon_orders": "ozon_orders",
+    "ozon_product_cards": "ozon_product_cards",
     "ozon_stocks": "ozon_stocks",
     "ozon_placement": "ozon_placement",
     "source_statistics": "source_files",
@@ -168,6 +185,20 @@ def _label_status(marketplace: str, status: str | None) -> str:
     if marketplace == "wb":
         return WB_STATUS_LABELS.get(status_key, status or "-")
     return status or "-"
+
+
+def _image_url_list(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return [value]
+        return _image_url_list(parsed)
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    return []
 
 
 def _wb_image_urls(nm_id: Any) -> list[str]:
@@ -599,8 +630,21 @@ def get_order_detail(*, marketplace: str, key: str) -> dict[str, Any]:
                 financial_payout AS payout,
                 financial_commission_amount,
                 financial_commission_percent,
+                card.primary_image AS image_url,
+                card.images AS image_urls,
                 updated_at
             FROM staging.ozon_fbo_order_items_full
+            LEFT JOIN LATERAL (
+                SELECT primary_image, images
+                FROM staging.marketplace_product_cards_current
+                WHERE marketplace = 'ozon'
+                  AND (
+                      article = staging.ozon_fbo_order_items_full.product_offer_id
+                      OR marketplace_sku = staging.ozon_fbo_order_items_full.product_sku
+                  )
+                ORDER BY updated_at DESC
+                LIMIT 1
+            ) card ON TRUE
             WHERE posting_number = %s
                OR order_number = %s
                OR COALESCE(order_number, posting_number) = %s
@@ -645,6 +689,10 @@ def get_order_detail(*, marketplace: str, key: str) -> dict[str, Any]:
             raw_payload = raw[0].get("payload") if raw else None
         for row in rows:
             row["status_label"] = _label_status("ozon", row.get("status"))
+            image_urls = _image_url_list(row.get("image_urls"))
+            if not image_urls and row.get("image_url"):
+                image_urls = [row.get("image_url")]
+            row["image_urls"] = image_urls
         for row in history:
             row["status_label"] = _label_status("ozon", row.get("status"))
             row["previous_status_label"] = _label_status("ozon", row.get("previous_status"))
@@ -688,8 +736,21 @@ def get_order_detail(*, marketplace: str, key: str) -> dict[str, Any]:
                 finished_price,
                 price_with_disc AS price,
                 cancel_date,
-                sticker
+                sticker,
+                card.primary_image AS image_url,
+                card.images AS image_urls
             FROM wb_orders_norm
+            LEFT JOIN LATERAL (
+                SELECT primary_image, images
+                FROM staging.marketplace_product_cards_current
+                WHERE marketplace = 'wb'
+                  AND (
+                      article = wb_orders_norm.supplier_article
+                      OR marketplace_sku = wb_orders_norm.nm_id
+                  )
+                ORDER BY updated_at DESC
+                LIMIT 1
+            ) card ON TRUE
             WHERE srid = %s
                OR g_number = %s
                OR COALESCE(g_number, srid) = %s
@@ -730,8 +791,10 @@ def get_order_detail(*, marketplace: str, key: str) -> dict[str, Any]:
             raw_payload = raw[0].get("payload") if raw else None
         for row in rows:
             row["status_label"] = _label_status("wb", row.get("status"))
-            image_urls = _wb_image_urls(row.get("marketplace_sku"))
-            row["image_url"] = image_urls[0] if image_urls else None
+            image_urls = _image_url_list(row.get("image_urls"))
+            if not image_urls:
+                image_urls = _wb_image_urls(row.get("marketplace_sku"))
+            row["image_url"] = row.get("image_url") or (image_urls[0] if image_urls else None)
             row["image_urls"] = image_urls
         for row in history:
             row["status_label"] = _label_status("wb", row.get("status"))
@@ -777,18 +840,23 @@ def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> li
                 product_quantity AS quantity,
                 product_price_amount AS price,
                 financial_payout AS payout,
-                p.primary_image AS image_url,
+                card.primary_image AS image_url,
+                card.images AS image_urls,
                 staging.ozon_fbo_order_items_full.updated_at
             FROM staging.ozon_fbo_order_items_full
             JOIN groups
                 ON groups.order_group_key = COALESCE(order_number, posting_number)
             LEFT JOIN LATERAL (
-                SELECT primary_image
-                FROM raw.ozon_product_info_items
-                WHERE offer_id = staging.ozon_fbo_order_items_full.product_offer_id
+                SELECT primary_image, images
+                FROM staging.marketplace_product_cards_current
+                WHERE marketplace = 'ozon'
+                  AND (
+                      article = staging.ozon_fbo_order_items_full.product_offer_id
+                      OR marketplace_sku = staging.ozon_fbo_order_items_full.product_sku
+                  )
                 ORDER BY updated_at DESC
                 LIMIT 1
-            ) p ON TRUE
+            ) card ON TRUE
             ORDER BY COALESCE(in_process_at, created_at, updated_at) DESC NULLS LAST
             """,
             (limit, offset),
@@ -797,7 +865,10 @@ def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> li
         for row in rows:
             row["order_group_key"] = row.get("order_number") or row.get("order_key")
             row["status_label"] = _label_status("ozon", row.get("status"))
-            row["image_urls"] = [row.get("image_url")] if row.get("image_url") else []
+            image_urls = _image_url_list(row.get("image_urls"))
+            if not image_urls and row.get("image_url"):
+                image_urls = [row.get("image_url")]
+            row["image_urls"] = image_urls
             result.append(_jsonable_row({"marketplace": "Ozon", **row}))
         return result
 
@@ -827,10 +898,23 @@ def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> li
                 1 AS quantity,
                 price_with_disc AS price,
                 finished_price AS payout,
+                card.primary_image AS image_url,
+                card.images AS image_urls,
                 last_change_ts AS updated_at
             FROM wb_orders_norm
             JOIN groups
                 ON groups.order_group_key = COALESCE(g_number, srid)
+            LEFT JOIN LATERAL (
+                SELECT primary_image, images
+                FROM staging.marketplace_product_cards_current
+                WHERE marketplace = 'wb'
+                  AND (
+                      article = wb_orders_norm.supplier_article
+                      OR marketplace_sku = wb_orders_norm.nm_id
+                  )
+                ORDER BY updated_at DESC
+                LIMIT 1
+            ) card ON TRUE
             ORDER BY COALESCE(date_ts, last_change_ts) DESC NULLS LAST
             """,
             (limit, offset),
@@ -839,8 +923,10 @@ def get_orders_feed(*, marketplace: str, limit: int = 50, offset: int = 0) -> li
         for row in rows:
             row["order_group_key"] = row.get("order_number") or row.get("order_key")
             row["status_label"] = _label_status("wb", row.get("status"))
-            image_urls = _wb_image_urls(row.get("marketplace_sku"))
-            row["image_url"] = image_urls[0] if image_urls else None
+            image_urls = _image_url_list(row.get("image_urls"))
+            if not image_urls:
+                image_urls = _wb_image_urls(row.get("marketplace_sku"))
+            row["image_url"] = row.get("image_url") or (image_urls[0] if image_urls else None)
             row["image_urls"] = image_urls
             result.append(_jsonable_row({"marketplace": "WB", **row}))
         return result

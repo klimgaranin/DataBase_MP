@@ -32,14 +32,17 @@ DataBase_MP/
 │   │   ├── http_wb_statistics.py   # HTTP-клиент WB Statistics API
 │   │   ├── http_wb_stocks.py       # HTTP-клиент WB Analytics API
 │   │   ├── http_wb_order_feed.py   # Новый WB Analytics Order Feed API
+│   │   ├── http_wb_content.py      # HTTP-клиент WB Content API
 │   │   ├── http_ozon_seller.py     # HTTP-клиент Ozon Seller API
 │   │   └── http_api_erp_tru.py     # HTTP-клиент ERP/TRU API
 │   ├── jobs/
 │   │   ├── job_wb_orders.py        # WB заказы
 │   │   ├── job_wb_order_feed.py    # WB лента заказов, текущие статусы
 │   │   ├── job_wb_stocks.py        # WB остатки
+│   │   ├── job_wb_product_cards.py # WB карточки товаров и фото
 │   │   ├── job_ozon_orders.py      # Ozon FBO заказы
 │   │   ├── job_ozon_stocks.py      # Ozon остатки
+│   │   ├── job_ozon_product_cards.py # Ozon карточки товаров и фото
 │   │   ├── job_ozon_placement.py   # Ozon стоимость размещения в БД
 │   │   ├── job_sheets_ozon_placement_export.py # Ozon хранение в Google Sheets
 │   │   ├── job_api_erp_tru_product_stats.py # ERP/TRU статистика товаров
@@ -159,6 +162,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\register_wb_order_feed_task.p
 Старый `WB_Orders_Sync` пока продолжает работать: он нужен для истории до 31 дня
 и для безопасного сравнения нового источника.
 
+#### Карточки товаров и фото — каждый час
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\register_wb_product_cards_task.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\register_ozon_product_cards_task.ps1
+```
+
+WB берёт официальные фото из Content API `POST /content/v2/get/cards/list`,
+поле `photos[].big`. Ozon берёт фото из Seller API `product/info/list`,
+поле `primary_image` и `images`.
+
 Задача в Планировщике будет называться
 `\DB_MP\Ozon_Orders_Sync`. Она запускает
 `scripts\run_ozon_orders.cmd` через скрытый wrapper `scripts\run_hidden.vbs`,
@@ -223,6 +237,8 @@ Register-ScheduledTask -TaskPath "\DB_MP\" -TaskName "WB_Stocks_Sync" `
 | `raw.wb_order_feed_orders` | Текущее raw-состояние заказа из нового WB Order Feed |
 | `raw.wb_order_feed_order_versions` | История изменений статусов нового WB Order Feed |
 | `staging.wb_order_feed_orders_full` | Полная техническая таблица Order Feed |
+| `raw.wb_content_cards` | Полные WB карточки товаров из Content API |
+| `staging.marketplace_product_cards_current` | Текущие карточки WB/Ozon и официальные ссылки на фото для UI |
 | `wb_orders_raw_dedup` | Сырые JSON-версии изменений (хранятся 14 дней)          |
 | `wb_stocks_snap`      | Актуальные остатки по складам (upsert по ключу)         |
 | `wb_stocks_raw`       | Полный слепок каждого запроса остатков (30 дней)        |
@@ -787,7 +803,7 @@ Credential Manager через `keyring`.
 | `SHEETS_ORDERS_EXPORT_MODE`     | ❌          | `upsert`     | Режим выгрузки заказов: `upsert` или `replace` |
 | `SHEETS_ORDERS_EXPORT_DRY_RUN`  | ❌          | `0`          | Проверить Sheets job без записи        |
 | `WB_TOKEN`                     | ✅           | —            | Секрет: общий токен WB API             |
-| `WB_TOKEN_CONTENT`             | ❌           | `WB_TOKEN`   | Опциональный отдельный токен WB Advertising API |
+| `WB_TOKEN_CONTENT`             | ❌           | `WB_TOKEN`   | Опциональный отдельный токен WB Content API |
 | `PG_DSN`                       | ✅           | —            | Настройка подключения к PostgreSQL без пароля |
 | `POSTGRES_PASSWORD`            | ✅           | —            | Секрет: пароль для Docker-контейнера   |
 | `TG_BOT_TOKEN`                 | ❌           | —            | Секрет: токен Telegram-бота            |
@@ -838,6 +854,8 @@ Credential Manager через `keyring`.
 | `SHEETS_SOURCE_COSTS_EXPORT_MODE` | ❌      | `replace`    | Режим обновления блоков `DATA!AX:AY`, `DATA!BB:BC` и `DATA!BK:BL` |
 | `SHEETS_SOURCE_COSTS_EXPORT_DRY_RUN` | ❌   | `0`          | Проверить Sheets job без записи       |
 | `OZON_STOCKS_LOG_FILE`         | ❌           | —            | Файл лога Ozon stocks job             |
+| `WB_PRODUCT_CARDS_LOG_FILE`    | ❌           | `logs/job_wb_product_cards.log` | Файл лога WB product cards job |
+| `OZON_PRODUCT_CARDS_LOG_FILE`  | ❌           | `logs/job_ozon_product_cards.log` | Файл лога Ozon product cards job |
 | `OZON_STOCKS_DRY_RUN`          | ❌           | `0`          | Проверить stocks без API/БД           |
 | `SOURCE_STATISTICS_FILE`       | ❌           | `local/source_exports/Статистика.xlsm` | Файл источника статистики |
 | `SOURCE_STATISTICS_LOG_FILE`   | ❌           | —            | Файл лога source statistics job        |

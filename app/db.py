@@ -515,6 +515,56 @@ CREATE TABLE IF NOT EXISTS raw.ozon_product_info_items (
 );
 """
 
+_DDL_WB_CONTENT_CARDS = """
+CREATE SCHEMA IF NOT EXISTS raw;
+CREATE TABLE IF NOT EXISTS raw.wb_content_cards (
+    nm_id          BIGINT      PRIMARY KEY,
+    imt_id         BIGINT,
+    vendor_code    TEXT,
+    subject_id     BIGINT,
+    subject_name   TEXT,
+    brand          TEXT,
+    title          TEXT,
+    photo_big      TEXT,
+    photos_count   INT         NOT NULL DEFAULT 0,
+    sizes_count    INT         NOT NULL DEFAULT 0,
+    photos         JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    payload        JSONB       NOT NULL,
+    source_run_id  TEXT        NOT NULL,
+    fetched_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_wb_content_cards_vendor
+    ON raw.wb_content_cards (vendor_code);
+CREATE INDEX IF NOT EXISTS idx_wb_content_cards_updated
+    ON raw.wb_content_cards (updated_at DESC);
+"""
+
+_DDL_MARKETPLACE_PRODUCT_CARDS_CURRENT = """
+CREATE SCHEMA IF NOT EXISTS staging;
+CREATE TABLE IF NOT EXISTS staging.marketplace_product_cards_current (
+    marketplace     TEXT        NOT NULL,
+    article         TEXT        NOT NULL,
+    product_id      TEXT,
+    marketplace_sku BIGINT,
+    product_name    TEXT,
+    brand           TEXT,
+    primary_image   TEXT,
+    images          JSONB       NOT NULL DEFAULT '[]'::jsonb,
+    images_count    INT         NOT NULL DEFAULT 0,
+    payload         JSONB       NOT NULL,
+    source_run_id   TEXT        NOT NULL,
+    fetched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (marketplace, article),
+    CONSTRAINT chk_marketplace_product_cards_marketplace CHECK (marketplace IN ('wb', 'ozon'))
+);
+CREATE INDEX IF NOT EXISTS idx_product_cards_marketplace_sku
+    ON staging.marketplace_product_cards_current (marketplace, marketplace_sku);
+CREATE INDEX IF NOT EXISTS idx_product_cards_updated
+    ON staging.marketplace_product_cards_current (updated_at DESC);
+"""
+
 _DDL_OZON_ANALYTICS_STOCKS = """
 CREATE SCHEMA IF NOT EXISTS raw;
 CREATE TABLE IF NOT EXISTS raw.ozon_analytics_stocks (
@@ -1941,6 +1991,111 @@ def upsert_core_ozon_marketplace_products(rows: list[dict[str, Any]]) -> int:
                 """,
                 values,
                 template="(%s, %s, %s, %s, %s, %s, %s::jsonb, %s)",
+                page_size=1000,
+            )
+            return len(values)
+
+
+def upsert_wb_content_cards(rows: list[dict[str, Any]], *, run_id: str) -> int:
+    if not rows:
+        return 0
+    values = [
+        (
+            r.get("nm_id"),
+            r.get("imt_id"),
+            r.get("vendor_code"),
+            r.get("subject_id"),
+            r.get("subject_name"),
+            r.get("brand"),
+            r.get("title"),
+            r.get("photo_big"),
+            r.get("photos_count") or 0,
+            r.get("sizes_count") or 0,
+            json.dumps(r.get("photos") or [], ensure_ascii=False, default=str),
+            json.dumps(r.get("payload") or {}, ensure_ascii=False, default=str),
+            run_id,
+        )
+        for r in rows
+        if r.get("nm_id")
+    ]
+    if not values:
+        return 0
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_DDL_WB_CONTENT_CARDS)
+            execute_values(
+                cur,
+                """
+                INSERT INTO raw.wb_content_cards
+                    (nm_id, imt_id, vendor_code, subject_id, subject_name, brand, title,
+                     photo_big, photos_count, sizes_count, photos, payload, source_run_id)
+                VALUES %s
+                ON CONFLICT (nm_id) DO UPDATE SET
+                    imt_id = EXCLUDED.imt_id,
+                    vendor_code = EXCLUDED.vendor_code,
+                    subject_id = EXCLUDED.subject_id,
+                    subject_name = EXCLUDED.subject_name,
+                    brand = EXCLUDED.brand,
+                    title = EXCLUDED.title,
+                    photo_big = EXCLUDED.photo_big,
+                    photos_count = EXCLUDED.photos_count,
+                    sizes_count = EXCLUDED.sizes_count,
+                    photos = EXCLUDED.photos,
+                    payload = EXCLUDED.payload,
+                    source_run_id = EXCLUDED.source_run_id,
+                    updated_at = NOW()
+                """,
+                values,
+                template="(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb, %s)",
+                page_size=1000,
+            )
+            return len(values)
+
+
+def upsert_marketplace_product_cards_current(rows: list[dict[str, Any]], *, run_id: str) -> int:
+    values = [
+        (
+            r.get("marketplace"),
+            str(r.get("article") or "").strip(),
+            r.get("product_id"),
+            r.get("marketplace_sku"),
+            r.get("product_name"),
+            r.get("brand"),
+            r.get("primary_image"),
+            json.dumps(r.get("images") or [], ensure_ascii=False, default=str),
+            r.get("images_count") or 0,
+            json.dumps(r.get("payload") or {}, ensure_ascii=False, default=str),
+            run_id,
+        )
+        for r in rows
+        if r.get("marketplace") in {"wb", "ozon"} and str(r.get("article") or "").strip()
+    ]
+    if not values:
+        return 0
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_DDL_MARKETPLACE_PRODUCT_CARDS_CURRENT)
+            execute_values(
+                cur,
+                """
+                INSERT INTO staging.marketplace_product_cards_current
+                    (marketplace, article, product_id, marketplace_sku, product_name, brand,
+                     primary_image, images, images_count, payload, source_run_id)
+                VALUES %s
+                ON CONFLICT (marketplace, article) DO UPDATE SET
+                    product_id = EXCLUDED.product_id,
+                    marketplace_sku = EXCLUDED.marketplace_sku,
+                    product_name = EXCLUDED.product_name,
+                    brand = EXCLUDED.brand,
+                    primary_image = EXCLUDED.primary_image,
+                    images = EXCLUDED.images,
+                    images_count = EXCLUDED.images_count,
+                    payload = EXCLUDED.payload,
+                    source_run_id = EXCLUDED.source_run_id,
+                    updated_at = NOW()
+                """,
+                values,
+                template="(%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s)",
                 page_size=1000,
             )
             return len(values)

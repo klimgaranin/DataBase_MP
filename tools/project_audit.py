@@ -18,8 +18,7 @@ REQUIRED_CORE_FILES = [
     "app/utils.py",
     "app/admin/service.py",
     "app/admin/static/index.html",
-    "app/admin/static/styles.css",
-    "app/admin/static/admin.js",
+    "app/clients/http_wb_content.py",
     "app/clients/http_wb_statistics.py",
     "app/clients/http_wb_stocks.py",
     "app/clients/http_ozon_seller.py",
@@ -28,15 +27,18 @@ REQUIRED_CORE_FILES = [
     "app/integrations/api_catalog.py",
     "app/cli.py",
     "app/jobs/job_wb_orders.py",
+    "app/jobs/job_wb_product_cards.py",
     "app/jobs/job_wb_stocks.py",
     "app/jobs/job_ozon_orders.py",
     "app/jobs/job_ozon_placement.py",
+    "app/jobs/job_ozon_product_cards.py",
     "app/jobs/job_ozon_stocks.py",
     "app/jobs/job_source_statistics.py",
     "app/jobs/wb_orders_logic.py",
     "app/normalize/norm_ozon_orders.py",
     "app/normalize/norm_ozon_placement.py",
     "app/normalize/norm_ozon_stocks.py",
+    "app/normalize/norm_product_cards.py",
     "app/normalize/norm_source_statistics.py",
     "app/normalize/norm_wb_orders.py",
     "app/normalize/norm_wb_stocks.py",
@@ -48,12 +50,15 @@ REQUIRED_CORE_FILES = [
     "migrations/V12__ozon_api_orders.sql",
     "migrations/V13__ozon_stocks_and_placement.sql",
     "migrations/V14__ozon_stock_details_and_fbo_payload.sql",
+    "migrations/V37__marketplace_product_cards.sql",
     "scripts/run_ozon_orders.cmd",
     "scripts/run_ozon_placement.cmd",
+    "scripts/run_ozon_product_cards.cmd",
     "scripts/run_ozon_stocks.cmd",
     "scripts/run_hidden.vbs",
     "scripts/run_source_statistics.cmd",
     "scripts/run_wb_orders.cmd",
+    "scripts/run_wb_product_cards.cmd",
     "scripts/run_wb_stocks.cmd",
     "tools/sheets_audit.py",
     "tools/sheets_logic_map.py",
@@ -89,6 +94,12 @@ def audit() -> list[Finding]:
     for rel_path in REQUIRED_CORE_FILES:
         if not (ROOT / rel_path).exists():
             findings.append(Finding("FAIL", "missing_core_file", f"Не найден обязательный файл: {rel_path}"))
+
+    admin_assets = ROOT / "app/admin/static/assets"
+    if not any(admin_assets.glob("index-*.js")):
+        findings.append(Finding("FAIL", "missing_admin_asset", "Не найден собранный JS asset админки: app/admin/static/assets/index-*.js"))
+    if not any(admin_assets.glob("index-*.css")):
+        findings.append(Finding("FAIL", "missing_admin_asset", "Не найден собранный CSS asset админки: app/admin/static/assets/index-*.css"))
 
     if not (ROOT / ARCHIVE_PATH).exists():
         findings.append(Finding("WARN", "missing_archive", f"Архив WB legal export не найден: {ARCHIVE_PATH}"))
