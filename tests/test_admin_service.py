@@ -10,6 +10,7 @@ from app.admin.service import (
     get_orders_daily_summary,
     get_orders_feed,
     get_overview,
+    start_job_batch,
     start_job_action,
 )
 
@@ -117,6 +118,14 @@ class AdminServiceTests(unittest.TestCase):
 
         self.assertEqual(rows[0]["job_name"], "Файлы 1С")
         self.assertEqual(rows[0]["status"], "running")
+
+    def test_start_failed_batch_skips_when_no_failed_jobs(self) -> None:
+        with patch("app.admin.service._db_fetch_all", return_value=[]):
+            result = start_job_batch("failed")
+
+        self.assertEqual(result["scope"], "failed")
+        self.assertEqual(result["count"], 0)
+        self.assertEqual(result["status"], "skipped")
 
 
 if __name__ == "__main__":

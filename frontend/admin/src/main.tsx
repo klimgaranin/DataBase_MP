@@ -49,6 +49,12 @@ type JobAction = {
   available: boolean;
 };
 
+type BatchRunResult = {
+  title?: string;
+  count?: number;
+  status?: string;
+};
+
 type OrderRow = {
   marketplace?: string;
   order_key?: string;
@@ -229,6 +235,7 @@ function App() {
   const [notice, setNotice] = useState("Вставьте API token.");
   const [loading, setLoading] = useState(false);
   const [running, setRunning] = useState<Set<string>>(new Set());
+  const [runningBatch, setRunningBatch] = useState<"failed" | "all" | null>(null);
   const [lastRefresh, setLastRefresh] = useState("-");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const ordersSentinelRef = useRef<HTMLDivElement | null>(null);
@@ -359,6 +366,27 @@ function App() {
     }
   }
 
+  async function runActionBatch(scope: "failed" | "all") {
+    setRunningBatch(scope);
+    try {
+      const result = await requestJson<BatchRunResult>(
+        `/api/v1/admin/actions/batch/${scope}/run`,
+        { method: "POST" },
+      );
+      const count = result.count ?? 0;
+      if (count > 0) {
+        pushToast(result.title || "Jobs запущены", `В очереди: ${count}`);
+      } else {
+        pushToast("Запуск не нужен", scope === "failed" ? "Ошибочных jobs за 24 часа нет" : "Доступных jobs нет");
+      }
+      [900, 4000, 12000, 30000].forEach((delay) => window.setTimeout(loadAdmin, delay));
+    } catch (error) {
+      pushToast("Jobs не запущены", error instanceof Error ? error.message : "Ошибка", "bad");
+    } finally {
+      setRunningBatch(null);
+    }
+  }
+
   function saveToken() {
     const clean = tokenDraft.trim();
     setToken(clean);
@@ -480,7 +508,17 @@ function App() {
                   <Kpi icon={<Activity />} label="Jobs" value={failedJobs ? `${failedJobs} с ошибкой` : overview ? "OK" : "-"} detail={`${overview?.jobs?.length || 0} последних запусков`} tone="amber" />
                 </div>
 
-                <Panel title="Запуск jobs" subtitle="Доступные команды" action={<IconButton onClick={() => void loadAdmin()}><RefreshCw size={17} /></IconButton>}>
+                <Panel
+                  title="Запуск jobs"
+                  subtitle="Доступные команды"
+                  action={(
+                    <MasterRunButton
+                      running={runningBatch !== null}
+                      onFailed={() => void runActionBatch("failed")}
+                      onAll={() => void runActionBatch("all")}
+                    />
+                  )}
+                >
                   <div className="grid grid-cols-[repeat(auto-fit,minmax(230px,1fr))] gap-3 p-4">
                     {actions.length ? actions.map((action) => (
                       <ActionCard
@@ -610,11 +648,33 @@ function Panel({ title, subtitle, action, children }: { title: string; subtitle:
   );
 }
 
-function IconButton({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
+function MasterRunButton({
+  running,
+  onFailed,
+  onAll,
+}: {
+  running: boolean;
+  onFailed: () => void;
+  onAll: () => void;
+}) {
   return (
-    <button className="grid h-10 w-10 place-items-center rounded-ui bg-slate-100 text-muted transition hover:-translate-y-0.5 hover:bg-white hover:shadow-soft" onClick={onClick}>
-      {children}
-    </button>
+    <div className="group relative">
+      <button
+        className="grid h-10 w-10 place-items-center rounded-ui bg-slate-100 text-muted transition hover:-translate-y-0.5 hover:bg-white hover:shadow-soft disabled:cursor-wait disabled:opacity-70"
+        onClick={onFailed}
+        disabled={running}
+        title="Перезапустить ошибочные jobs"
+      >
+        <RefreshCw size={17} className={running ? "animate-spin" : ""} />
+      </button>
+      <button
+        className="absolute right-0 top-10 z-20 hidden whitespace-nowrap rounded-ui bg-[#1f2933] px-3 py-2 text-xs font-extrabold text-white shadow-panel transition hover:bg-[#2d3a46] group-hover:block disabled:cursor-wait disabled:opacity-70"
+        onClick={onAll}
+        disabled={running}
+      >
+        Обновить всё
+      </button>
+    </div>
   );
 }
 
@@ -753,13 +813,16 @@ function OrdersFeed({
 }
 
 function OrderProductRow({ product }: { product: ProductGroup }) {
+  const firstOrderKey = product.rows.find((row) => row.order_group_key || row.order_number || row.order_key);
+  const orderLabel = firstOrderKey?.order_group_key || firstOrderKey?.order_number || firstOrderKey?.order_key;
   return (
-    <div className="grid grid-cols-[72px_minmax(0,1fr)_auto] items-start gap-3 rounded-ui border border-[#edf1f5] bg-[#fbfcfd] p-3 max-[720px]:grid-cols-[72px_minmax(0,1fr)]">
+    <div className="grid min-h-[132px] grid-cols-[104px_minmax(0,1fr)_auto] items-stretch gap-3 rounded-ui border border-[#edf1f5] bg-[#fbfcfd] p-3 max-[720px]:grid-cols-[104px_minmax(0,1fr)]">
       <ProductImage urls={product.imageUrls} name={product.productName} />
       <div className="min-w-0">
         <div className="line-clamp-2 font-bold leading-snug">{product.productName || "Товар без названия"}</div>
         <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
           <span>Артикул: <strong className="text-ink">{product.article}</strong></span>
+          {orderLabel ? <span>Заказ: <strong className="text-ink">{orderLabel}</strong></span> : null}
           <span>Строк: {product.rows.length}</span>
         </div>
         <CopyChips rows={product.rows} />
@@ -794,26 +857,42 @@ function CopyChips({ rows }: { rows: OrderRow[] }) {
 
 function ProductImage({ urls, name }: { urls: string[]; name?: string }) {
   const [index, setIndex] = useState(0);
+  const [attempt, setAttempt] = useState(0);
   const src = urls[index];
+  const retrySrc = src ? `${src}${src.includes("?") ? "&" : "?"}r=${attempt}` : "";
+  useEffect(() => {
+    setIndex(0);
+    setAttempt(0);
+  }, [urls.join("|")]);
+
+  function handleImageError() {
+    if (attempt < 2) {
+      window.setTimeout(() => setAttempt((current) => current + 1), 250 * (attempt + 1));
+      return;
+    }
+    setAttempt(0);
+    setIndex((current) => current + 1);
+  }
+
   if (!src) {
     return (
-      <div className="grid h-[72px] w-[72px] place-items-center rounded-ui bg-[#edf1f5] text-muted">
+      <div className="grid h-full min-h-[108px] w-[104px] place-items-center rounded-ui bg-[#edf1f5] text-muted">
         <ImageOff size={20} />
       </div>
     );
   }
   return (
-    <div className="group relative h-[72px] w-[72px]">
+    <div className="group relative h-full min-h-[108px] w-[104px]">
       <img
-        src={src}
+        src={retrySrc}
         alt={name || "Фото товара"}
-        className="h-[72px] w-[72px] rounded-ui border border-[#e8eef4] bg-white object-contain p-1"
+        className="h-full min-h-[108px] w-[104px] rounded-ui border border-[#e8eef4] bg-white object-contain p-2"
         loading="lazy"
-        onError={() => setIndex((current) => current + 1)}
+        onError={handleImageError}
       />
-      <div className="pointer-events-none absolute left-[82px] top-0 z-30 hidden h-[320px] w-[160px] rounded-ui border border-[#d9e0e7] bg-white p-2 shadow-panel group-hover:block max-[720px]:left-0 max-[720px]:top-[82px]">
+      <div className="pointer-events-none absolute left-[116px] top-0 z-30 hidden h-[344px] w-[258px] rounded-ui border border-[#d9e0e7] bg-white p-2 shadow-panel group-hover:block max-[720px]:left-0 max-[720px]:top-[118px]">
         <img
-          src={src}
+          src={retrySrc}
           alt={name || "Фото товара"}
           className="h-full w-full rounded-md object-cover"
         />

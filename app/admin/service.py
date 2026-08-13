@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -109,6 +110,21 @@ JOB_ACTIONS: dict[str, dict[str, str]] = {
     },
 }
 
+JOB_RUN_ACTION_ALIASES = {
+    "wb_orders": "wb_orders",
+    "wb_order_feed": "wb_order_feed",
+    "wb_stocks": "wb_stocks",
+    "ozon_orders": "ozon_orders",
+    "ozon_stocks": "ozon_stocks",
+    "ozon_placement": "ozon_placement",
+    "source_statistics": "source_files",
+    "source_files": "source_files",
+    "source_costs": "source_costs",
+    "api_erp_tru_product_stats": "erp_tru_sales",
+    "sheets_api_erp_tru_sales_export": "erp_tru_sales",
+    "sheets_orders_export": "sheets_orders",
+}
+
 
 def _db_fetch_all(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     from app.db import connect
@@ -190,19 +206,37 @@ def _wb_image_urls(nm_id: Any) -> list[str]:
         basket = "15"
     else:
         basket = "16"
-    urls = [
-        f"https://basket-{basket}.wbbasket.ru/vol{volume}/part{part}/{value}/images/c516x688/1.webp",
-        f"https://basket-{basket}.wbbasket.ru/vol{volume}/part{part}/{value}/images/big/1.webp",
-    ]
-    for index in range(1, 31):
-        candidate = f"{index:02d}"
-        urls.append(f"https://basket-{candidate}.wbbasket.ru/vol{volume}/part{part}/{value}/images/c516x688/1.webp")
+    urls = []
+    sizes = ("c516x688", "big", "tm")
+    baskets = [basket, *[f"{index:02d}" for index in range(1, 31)]]
+    for candidate in baskets:
+        for size in sizes:
+            urls.append(
+                f"https://basket-{candidate}.wbbasket.ru/vol{volume}/part{part}/{value}/images/{size}/1.webp"
+            )
     return list(dict.fromkeys(urls))
 
 
 def _action_run_rows() -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for run in sorted(_ACTION_RUNS, key=lambda item: item["started_at"], reverse=True):
+        if run.get("status") in {"running", "ok", "fail"} and run.get("proc") is None:
+            rows.append(
+                {
+                    "job_name": run["title"],
+                    "started_at": run["started_at"],
+                    "finished_at": run.get("finished_at"),
+                    "status": run["status"],
+                    "api_rows": None,
+                    "raw_new": None,
+                    "norm_upserted": None,
+                    "duplicates": None,
+                    "dup_pct": None,
+                    "error": run.get("error", ""),
+                }
+            )
+            continue
+
         proc = run.get("proc")
         return_code = proc.poll() if proc is not None else None
         if return_code is None:
@@ -369,28 +403,48 @@ def get_job_actions() -> list[dict[str, Any]]:
     return actions
 
 
+def _action_command(action: dict[str, str]) -> tuple[list[str], int]:
+    script_path = (PROJECT_ROOT / action["script"]).resolve()
+    if not script_path.exists():
+        raise FileNotFoundError(f"Скрипт не найден: {action['script']}")
+    if sys.platform == "win32":
+        return ["cmd", "/c", str(script_path)], subprocess.CREATE_NO_WINDOW
+    return [str(script_path)], 0
+
+
+def _failed_action_keys() -> list[str]:
+    rows = _db_fetch_all(
+        """
+        SELECT job_name
+        FROM job_runs
+        WHERE started_at >= NOW() - INTERVAL '24 hours'
+          AND LOWER(COALESCE(status, '')) NOT IN ('ok', 'running')
+        ORDER BY id DESC
+        LIMIT 200
+        """
+    )
+    keys: list[str] = []
+    for row in rows:
+        job_name = str(row.get("job_name") or "").strip().lower()
+        key = JOB_RUN_ACTION_ALIASES.get(job_name, job_name)
+        if key in JOB_ACTIONS and key not in keys:
+            keys.append(key)
+    return keys
+
+
 def start_job_action(key: str) -> dict[str, Any]:
     action = JOB_ACTIONS.get(key)
     if action is None:
         raise ValueError("Неизвестная команда запуска")
 
-    script_path = (PROJECT_ROOT / action["script"]).resolve()
-    if not script_path.exists():
-        raise FileNotFoundError(f"Скрипт не найден: {action['script']}")
-
-    job_id = str(uuid.uuid4())
-    if sys.platform == "win32":
-        cmd = ["cmd", "/c", str(script_path)]
-        creationflags = subprocess.CREATE_NO_WINDOW
-    else:
-        cmd = [str(script_path)]
-        creationflags = 0
+    cmd, creationflags = _action_command(action)
 
     proc = subprocess.Popen(
         cmd,
         cwd=str(PROJECT_ROOT),
         creationflags=creationflags,
     )
+    job_id = str(uuid.uuid4())
     started_at = datetime.now().isoformat()
     _ACTION_RUNS.append(
         {
@@ -408,6 +462,78 @@ def start_job_action(key: str) -> dict[str, Any]:
         "title": action["title"],
         "pid": proc.pid,
         "started_at": started_at,
+    }
+
+
+def _run_action_batch(run: dict[str, Any], keys: list[str]) -> None:
+    errors: list[str] = []
+    for key in keys:
+        action = JOB_ACTIONS[key]
+        try:
+            cmd, creationflags = _action_command(action)
+            completed = subprocess.run(
+                cmd,
+                cwd=str(PROJECT_ROOT),
+                creationflags=creationflags,
+                check=False,
+            )
+        except Exception as exc:  # pragma: no cover - protective runtime branch
+            errors.append(f"{action['title']}: {exc}")
+            continue
+        if completed.returncode != 0:
+            errors.append(f"{action['title']}: код {completed.returncode}")
+    run["finished_at"] = datetime.now().isoformat()
+    if errors:
+        run["status"] = "fail"
+        run["error"] = "; ".join(errors)[:240]
+    else:
+        run["status"] = "ok"
+        run["error"] = ""
+
+
+def start_job_batch(scope: str) -> dict[str, Any]:
+    if scope == "failed":
+        keys = _failed_action_keys()
+        title = "Перезапуск ошибочных jobs"
+    elif scope == "all":
+        keys = [key for key, action in JOB_ACTIONS.items() if (PROJECT_ROOT / action["script"]).exists()]
+        title = "Запуск всех jobs"
+    else:
+        raise ValueError("scope должен быть failed или all")
+
+    if not keys:
+        return {
+            "job_id": str(uuid.uuid4()),
+            "scope": scope,
+            "title": title,
+            "started_at": datetime.now().isoformat(),
+            "count": 0,
+            "keys": [],
+            "status": "skipped",
+        }
+
+    run = {
+        "job_id": str(uuid.uuid4()),
+        "key": f"batch_{scope}",
+        "title": title,
+        "started_at": datetime.now().isoformat(),
+        "finished_at": None,
+        "proc": None,
+        "status": "running",
+        "error": f"В очереди: {', '.join(keys)}",
+    }
+    _ACTION_RUNS.append(run)
+    del _ACTION_RUNS[:-30]
+    thread = threading.Thread(target=_run_action_batch, args=(run, keys), daemon=True)
+    thread.start()
+    return {
+        "job_id": run["job_id"],
+        "scope": scope,
+        "title": title,
+        "started_at": run["started_at"],
+        "count": len(keys),
+        "keys": keys,
+        "status": "running",
     }
 
 
