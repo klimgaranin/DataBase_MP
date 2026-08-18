@@ -25,6 +25,7 @@ from app.clients.local_source_files import (
     read_first_sheet_rows,
     read_local_table_rows,
     read_production_inventory_rows,
+    read_supply_order_spec_rows,
     read_supply_pipeline_rows,
     read_tabular_text,
     resolve_latest_file,
@@ -359,6 +360,12 @@ class PlacementAndLocalFileTests(unittest.TestCase):
             sheet.append(["Артикул", "согласование заказа", "в производстве", "готов", "в пути", "Дата Минск"])
             sheet.append([200, 1, 2, 3, 4, "01.07.2026"])
             sheet.append([100, 5, 6, 7, 8, "02.07.2026"])
+            fill_sheet = workbook.create_sheet("1-для заполнения")
+            fill_sheet.append(["Артикул", "Спец-ия", "Дата производства"])
+            fill_sheet.append([100, "SPEC-1", "03.07.2026"])
+            arrived_sheet = workbook.create_sheet("2-пришло")
+            arrived_sheet.append(["Артикул", "Спец-ия", "Дата производсвта"])
+            arrived_sheet.append([200, "SPEC-2", "04.07.2026"])
             workbook.save(orders_path)
             workbook.close()
 
@@ -366,6 +373,11 @@ class PlacementAndLocalFileTests(unittest.TestCase):
             self.assertEqual([row["Артикул"] for row in pipeline], [100, 200])
             self.assertEqual(pipeline[0]["СОГЛ Заказа"], 5)
             self.assertEqual(pipeline[0]["МИНСК"], "02.07.2026")
+            specs = read_supply_order_spec_rows(orders_path)
+            self.assertEqual([row["Лист"] for row in specs], ["1-для заполнения", "2-пришло"])
+            self.assertEqual([row["Артикул"] for row in specs], [100, 200])
+            self.assertEqual(specs[0]["Спец-ия"], "SPEC-1")
+            self.assertEqual(specs[1]["Дата производства"], "04.07.2026")
 
             stocks_path = root / "Остатки МП.txt"
             stocks_path.write_text(

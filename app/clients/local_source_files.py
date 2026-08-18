@@ -90,6 +90,21 @@ def read_supply_pipeline_rows(path: str | Path) -> list[dict[str, Any]]:
     return sorted(selected, key=lambda row: str(row.get("Артикул") or ""))
 
 
+def read_supply_order_spec_rows(path: str | Path) -> list[dict[str, Any]]:
+    source = Path(path)
+    workbook = load_workbook(source, read_only=True, data_only=True)
+    try:
+        rows: list[dict[str, Any]] = []
+        for sheet_name in ("1-для заполнения", "2-пришло"):
+            if sheet_name not in workbook.sheetnames:
+                continue
+            sheet = workbook[sheet_name]
+            rows.extend(_read_supply_order_spec_sheet(sheet.iter_rows(values_only=True), sheet_name=sheet_name))
+        return rows
+    finally:
+        workbook.close()
+
+
 def read_production_inventory_rows(path: str | Path) -> list[dict[str, Any]]:
     source = Path(path)
     if source.suffix.lower() == ".txt":
@@ -126,6 +141,30 @@ def _read_production_inventory_txt(path: Path) -> list[dict[str, Any]]:
         if any(value not in (None, "") for value in row.values()):
             data_rows.append(row)
     return _transform_production_inventory_rows(data_rows, remove_last=True)
+
+
+def _read_supply_order_spec_sheet(source_rows, *, sheet_name: str) -> list[dict[str, Any]]:
+    rows = list(source_rows)
+    if not rows:
+        return []
+    header_idx = _find_header_row(rows)
+    headers = [str(cell).strip() if cell is not None else f"Column{idx}" for idx, cell in enumerate(rows[header_idx], 1)]
+    selected: list[dict[str, Any]] = []
+    for excel_row_number, raw_row in enumerate(rows[header_idx + 1 :], start=header_idx + 2):
+        row = {headers[idx]: raw_row[idx] if idx < len(raw_row) else None for idx in range(len(headers))}
+        item_article = row.get("Артикул")
+        if item_article in (None, ""):
+            continue
+        selected.append(
+            {
+                "Лист": sheet_name,
+                "Номер строки": excel_row_number,
+                "Артикул": item_article,
+                "Спец-ия": _first_present(row, "Спец-ия", "Спецификация", "Спец", "Специф."),
+                "Дата производства": _first_present(row, "Дата производства", "Дата производсвта"),
+            }
+        )
+    return selected
 
 
 def _transform_production_inventory_rows(rows: list[dict[str, Any]], *, remove_last: bool) -> list[dict[str, Any]]:
@@ -243,6 +282,14 @@ def _parse_ru_number(value: Any) -> float:
         return float(str(value).replace(" ", "").replace(".", ",").replace(",", "."))
     except (TypeError, ValueError):
         return 0.0
+
+
+def _first_present(row: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        value = row.get(name)
+        if value not in (None, ""):
+            return value
+    return None
 
 
 def _find_header_row(rows: list[tuple[Any, ...]]) -> int:

@@ -13,6 +13,7 @@ from app.normalize.norm_source_statistics import (
     normalize_ozon_storage,
     normalize_production_inventory,
     normalize_stock_summary,
+    normalize_supply_order_spec,
     normalize_supply_pipeline,
 )
 from app.jobs.job_source_statistics import _file_changed
@@ -71,11 +72,15 @@ class SourceStatisticsNormalizationTests(unittest.TestCase):
     def test_normalize_internal_blocks(self) -> None:
         inventory = normalize_production_inventory({"Артикул": "021549", "СМП": "1", "ОСН": "2", "СОХ": "3,5", "СВХ": "4", "ТС": "5"})
         pipeline = normalize_supply_pipeline({"Артикул": "ART-1", "СОГЛ Заказа": "1", "В ПРОИЗВ": "2", "ГОТОВ": "3", "В ПУТИ": "4", "МИНСК": "01.07.2026"})
+        spec = normalize_supply_order_spec({"Лист": "1-для заполнения", "Номер строки": 5, "Артикул": "00123", "Спец-ия": "A-7", "Дата производства": "02.08.2026"})
         self.assertEqual(inventory["article"], "21549")
         self.assertEqual(inventory["soh_qty"], 3.5)
         self.assertEqual(inventory["ts_qty"], 5)
         self.assertEqual(pipeline["minsk_date"].isoformat(), "2026-07-01")
         self.assertEqual(pipeline["ready_qty"], 3)
+        self.assertEqual(spec["article"], "123")
+        self.assertEqual(spec["specification"], "A-7")
+        self.assertEqual(spec["production_date"].isoformat(), "2026-08-02")
 
     def test_file_changed_uses_latest_saved_sha(self) -> None:
         def latest_sha256(*, source_name: str, table_name: str) -> str | None:

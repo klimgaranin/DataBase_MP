@@ -279,6 +279,26 @@ CREATE TABLE IF NOT EXISTS staging.supply_pipeline_current (
 );
 """
 
+_DDL_SUPPLY_ORDER_SPECS_CURRENT = """
+CREATE SCHEMA IF NOT EXISTS staging;
+CREATE TABLE IF NOT EXISTS staging.supply_order_specs_current (
+    source_sheet      TEXT        NOT NULL,
+    source_row_number INT         NOT NULL DEFAULT 0,
+    article           TEXT        NOT NULL,
+    specification     TEXT        NOT NULL DEFAULT '',
+    production_date   DATE,
+    payload           JSONB       NOT NULL DEFAULT '{}'::jsonb,
+    source_run_id     TEXT        NOT NULL,
+    snapped_at        TIMESTAMPTZ NOT NULL,
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (source_sheet, source_row_number, article)
+);
+CREATE INDEX IF NOT EXISTS idx_supply_order_specs_current_article
+    ON staging.supply_order_specs_current (article);
+CREATE INDEX IF NOT EXISTS idx_supply_order_specs_current_date
+    ON staging.supply_order_specs_current (production_date);
+"""
+
 _DDL_OZON_FBO_POSTINGS = """
 CREATE SCHEMA IF NOT EXISTS raw;
 CREATE TABLE IF NOT EXISTS raw.ozon_fbo_postings (
@@ -1291,6 +1311,48 @@ def upsert_supply_pipeline_current(rows: list[dict[str, Any]], *, run_id: str, s
                 template="(%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)",
                 page_size=1000,
             )
+            return len(values)
+
+
+def replace_supply_order_specs_current(rows: list[dict[str, Any]], *, run_id: str, snapped_at: str) -> int:
+    values = [
+        (
+            r.get("source_sheet") or "",
+            r.get("source_row_number") or 0,
+            r["article"],
+            r.get("specification") or "",
+            r.get("production_date"),
+            json.dumps(r.get("payload", {}), ensure_ascii=False, default=str),
+            run_id,
+            snapped_at,
+        )
+        for r in rows
+        if r.get("article")
+    ]
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(_DDL_SUPPLY_ORDER_SPECS_CURRENT)
+            cur.execute("DELETE FROM staging.supply_order_specs_current")
+            if values:
+                execute_values(
+                    cur,
+                    """
+                    INSERT INTO staging.supply_order_specs_current
+                        (source_sheet, source_row_number, article, specification,
+                         production_date, payload, source_run_id, snapped_at)
+                    VALUES %s
+                    ON CONFLICT (source_sheet, source_row_number, article) DO UPDATE SET
+                        specification = EXCLUDED.specification,
+                        production_date = EXCLUDED.production_date,
+                        payload = EXCLUDED.payload,
+                        source_run_id = EXCLUDED.source_run_id,
+                        snapped_at = EXCLUDED.snapped_at,
+                        updated_at = NOW()
+                    """,
+                    values,
+                    template="(%s, %s, %s, %s, %s, %s::jsonb, %s, %s)",
+                    page_size=1000,
+                )
             return len(values)
 
 

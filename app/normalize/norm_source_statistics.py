@@ -125,3 +125,17 @@ def normalize_supply_pipeline(row: dict[str, Any]) -> dict[str, Any] | None:
         "minsk_date": parse_date(row.get("МИНСК")),
         "payload": row,
     }
+
+
+def normalize_supply_order_spec(row: dict[str, Any]) -> dict[str, Any] | None:
+    item_article = article(row.get("Артикул"))
+    if not item_article:
+        return None
+    return {
+        "source_sheet": str(row.get("Лист") or "").strip(),
+        "source_row_number": parse_int(row.get("Номер строки")),
+        "article": item_article,
+        "specification": str(row.get("Спец-ия") or row.get("Спецификация") or "").strip(),
+        "production_date": parse_date(row.get("Дата производства") or row.get("Дата производсвта")),
+        "payload": row,
+    }

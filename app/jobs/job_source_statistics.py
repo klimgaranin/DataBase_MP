@@ -25,6 +25,7 @@ from app.clients.source_statistics_excel import ExcelTableData, read_excel_table
 from app.clients.local_source_files import (
     file_sha256,
     read_production_inventory_rows,
+    read_supply_order_spec_rows,
     read_supply_pipeline_rows,
     resolve_latest_file,
     resolve_latest_file_preferred,
@@ -34,6 +35,7 @@ from app.normalize.norm_source_statistics import (
     normalize_ozon_storage,
     normalize_production_inventory,
     normalize_stock_summary,
+    normalize_supply_order_spec,
     normalize_supply_pipeline,
 )
 
@@ -53,6 +55,7 @@ def _db_functions() -> dict[str, object]:
         insert_job_run,
         insert_production_inventory_snapshot,
         insert_source_file_snapshots,
+        replace_supply_order_specs_current,
         try_advisory_lock,
         upsert_ozon_storage_costs,
         upsert_source_orders_daily,
@@ -66,6 +69,7 @@ def _db_functions() -> dict[str, object]:
         "insert_job_run": insert_job_run,
         "insert_production_inventory_snapshot": insert_production_inventory_snapshot,
         "insert_source_file_snapshots": insert_source_file_snapshots,
+        "replace_supply_order_specs_current": replace_supply_order_specs_current,
         "try_advisory_lock": try_advisory_lock,
         "upsert_ozon_storage_costs": upsert_ozon_storage_costs,
         "upsert_source_orders_daily": upsert_source_orders_daily,
@@ -137,6 +141,7 @@ def _empty_normalized() -> dict[str, list[dict]]:
         "ozon_storage": [],
         "production_inventory": [],
         "supply_pipeline": [],
+        "supply_order_specs": [],
     }
 
 
@@ -225,8 +230,10 @@ def _apply_direct_file_sources(
         orders_path = resolve_latest_file(str(cfg["orders_list_path"]), patterns=("Список*.xlsx", "*.xlsx"))
         orders_sha = file_sha256(orders_path)
         rows = read_supply_pipeline_rows(orders_path)
-        direct_source_rows += len(rows)
+        spec_rows = read_supply_order_spec_rows(orders_path)
+        direct_source_rows += len(rows) + len(spec_rows)
         direct_rows = [row for source_row in rows for row in [normalize_supply_pipeline(source_row)] if row is not None]
+        direct_spec_rows = [row for source_row in spec_rows for row in [normalize_supply_order_spec(source_row)] if row is not None]
         if _file_changed(
             source_name="Список заказов",
             table_name="Список_заказов",
@@ -248,6 +255,27 @@ def _apply_direct_file_sources(
         else:
             unchanged_files += 1
             log.info("Файловая статистика: список заказов не изменился, запись пропущена: %s", orders_path)
+        if _file_changed(
+            source_name="Список заказов",
+            table_name="Список_заказов_спецификации",
+            sha256=orders_sha,
+            latest_sha256=latest_sha256,
+            skip_unchanged=skip_unchanged,
+        ):
+            normalized["supply_order_specs"] = direct_spec_rows
+            snapshots.append(
+                _source_snapshot(
+                    source_name="Список заказов",
+                    path=orders_path,
+                    sha256=orders_sha,
+                    table_name="Список_заказов_спецификации",
+                    rows=spec_rows,
+                )
+            )
+            log.info("Файловая статистика: спецификации заказов прочитаны из файла=%s, строк=%d", orders_path, len(direct_spec_rows))
+        else:
+            unchanged_files += 1
+            log.info("Файловая статистика: спецификации заказов не изменились, запись пропущена: %s", orders_path)
     except Exception as exc:
         missing_tables.add("Список_заказов")
         log.warning("Файловая статистика: список заказов не прочитан напрямую, используем данные из XLSM: %s", exc)
@@ -365,7 +393,7 @@ def main() -> int:
             )
 
         snapshots = direct_snapshots + xlsm_snapshots
-        changed_files = len(direct_snapshots)
+        changed_blocks = len(direct_snapshots)
         if cfg["skip_unchanged"] and not snapshots and unchanged_files:
             no_changes = True
             log.info("Файловая статистика: изменений в прямых файлах нет, БД не обновлялась.")
@@ -386,18 +414,20 @@ def main() -> int:
             norm_upserted += db["upsert_ozon_storage_costs"](normalized["ozon_storage"], run_id=started_at, snapped_at=snapped_at)
             norm_upserted += db["insert_production_inventory_snapshot"](normalized["production_inventory"], snapped_at=snapped_at)
             norm_upserted += db["upsert_supply_pipeline_current"](normalized["supply_pipeline"], run_id=started_at, snapped_at=snapped_at)
+            norm_upserted += db["replace_supply_order_specs_current"](normalized["supply_order_specs"], run_id=started_at, snapped_at=snapped_at)
 
         log.info(
-            "Файловая статистика: raw snapshot=%d, строк к записи=%d, изменённых прямых файлов=%d, без изменений=%d, старые заказы=%d, старые остатки=%d, старое хранение Ozon=%d, остатки 1С=%d, список заказов=%d",
+            "Файловая статистика: raw snapshot=%d, строк к записи=%d, изменённых блоков=%d, без изменений=%d, старые заказы=%d, старые остатки=%d, старое хранение Ozon=%d, остатки 1С=%d, список заказов=%d, спецификации заказов=%d",
             raw_inserted,
             norm_upserted,
-            changed_files,
+            changed_blocks,
             unchanged_files,
             len(normalized["orders"]),
             len(normalized["stocks"]),
             len(normalized["ozon_storage"]),
             len(normalized["production_inventory"]),
             len(normalized["supply_pipeline"]),
+            len(normalized["supply_order_specs"]),
         )
         if no_changes:
             return int(cfg.get("no_changes_exit_code") or 0)
