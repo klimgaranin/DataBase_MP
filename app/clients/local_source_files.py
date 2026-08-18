@@ -160,7 +160,7 @@ def _read_supply_order_spec_sheet(source_rows, *, sheet_name: str) -> list[dict[
                 "Лист": sheet_name,
                 "Номер строки": excel_row_number,
                 "Артикул": item_article,
-                "Спец-ия": _first_matching(row, _is_specification_column),
+                "LOT": _first_matching(row, _is_specification_column),
                 "Дата производства": _first_matching(row, _is_production_date_column),
             }
         )

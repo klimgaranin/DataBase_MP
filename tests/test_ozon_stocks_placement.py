@@ -379,7 +379,7 @@ class PlacementAndLocalFileTests(unittest.TestCase):
             specs = read_supply_order_spec_rows(orders_path)
             self.assertEqual([row["Лист"] for row in specs], ["Для заполнения", "Пришло"])
             self.assertEqual([row["Артикул"] for row in specs], [100, 200])
-            self.assertEqual(specs[0]["Спец-ия"], "SPEC-1")
+            self.assertEqual(specs[0]["LOT"], "SPEC-1")
             self.assertEqual(specs[1]["Дата производства"], "04.07.2026")
 
             stocks_path = root / "Остатки МП.txt"
