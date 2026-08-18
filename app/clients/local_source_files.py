@@ -300,7 +300,7 @@ def _is_supply_order_spec_sheet(sheet_name: str) -> bool:
 
 def _is_specification_column(column_name: str) -> bool:
     normalized = column_name.strip().lower().replace("ё", "е")
-    return normalized.startswith("спец") or "специф" in normalized
+    return normalized == "lot" or normalized.startswith("спец") or "специф" in normalized
 
 
 def _is_production_date_column(column_name: str) -> bool:
