@@ -95,8 +95,8 @@ def read_supply_order_spec_rows(path: str | Path) -> list[dict[str, Any]]:
     workbook = load_workbook(source, read_only=True, data_only=True)
     try:
         rows: list[dict[str, Any]] = []
-        for sheet_name in ("1-для заполнения", "2-пришло"):
-            if sheet_name not in workbook.sheetnames:
+        for sheet_name in workbook.sheetnames:
+            if not _is_supply_order_spec_sheet(sheet_name):
                 continue
             sheet = workbook[sheet_name]
             rows.extend(_read_supply_order_spec_sheet(sheet.iter_rows(values_only=True), sheet_name=sheet_name))
@@ -160,8 +160,8 @@ def _read_supply_order_spec_sheet(source_rows, *, sheet_name: str) -> list[dict[
                 "Лист": sheet_name,
                 "Номер строки": excel_row_number,
                 "Артикул": item_article,
-                "Спец-ия": _first_present(row, "Спец-ия", "Спецификация", "Спец", "Специф."),
-                "Дата производства": _first_present(row, "Дата производства", "Дата производсвта"),
+                "Спец-ия": _first_matching(row, _is_specification_column),
+                "Дата производства": _first_matching(row, _is_production_date_column),
             }
         )
     return selected
@@ -284,12 +284,28 @@ def _parse_ru_number(value: Any) -> float:
         return 0.0
 
 
-def _first_present(row: dict[str, Any], *names: str) -> Any:
-    for name in names:
-        value = row.get(name)
-        if value not in (None, ""):
+def _first_matching(row: dict[str, Any], predicate) -> Any:
+    for key, value in row.items():
+        if predicate(str(key)) and value not in (None, ""):
             return value
     return None
+
+
+def _is_supply_order_spec_sheet(sheet_name: str) -> bool:
+    normalized = sheet_name.strip().lower().replace("ё", "е")
+    if "old" in normalized:
+        return False
+    return "заполн" in normalized or normalized == "пришло" or normalized.endswith("-пришло")
+
+
+def _is_specification_column(column_name: str) -> bool:
+    normalized = column_name.strip().lower().replace("ё", "е")
+    return normalized.startswith("спец") or "специф" in normalized
+
+
+def _is_production_date_column(column_name: str) -> bool:
+    normalized = column_name.strip().lower().replace("ё", "е")
+    return "дата" in normalized and ("производ" in normalized or "производсв" in normalized)
 
 
 def _find_header_row(rows: list[tuple[Any, ...]]) -> int:
