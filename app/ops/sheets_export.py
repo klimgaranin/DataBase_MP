@@ -18,7 +18,9 @@ API_ERP_TRU_SALES_EXPORT_HEADERS = ["Артикул", "Кол-во"]
 SOURCE_MARKETPLACE_COST_EXPORT_HEADERS = ["Артикул", "С/с BYN"]
 SOURCE_PRODUCTION_INVENTORY_EXPORT_HEADERS = ["Артикул", "СМП", "ОСН", "СОХ", "СВХ", "ТС"]
 SOURCE_SUPPLY_PIPELINE_EXPORT_HEADERS = ["Артикул", "СОГЛ Заказа", "В ПРОИЗВ", "ГОТОВ", "В ПУТИ", "МИНСК"]
+SOURCE_SUPPLY_ORDER_SPECS_EXPORT_HEADERS = ["Артикул", "LOT", "Дата производства"]
 DEFAULT_ORDERS_SHEET_NAME = "DATA"
+DEFAULT_SOURCE_SPECS_SHEET_NAME = "DATA 2"
 DEFAULT_MP_COST_SPREADSHEET_ID = "1vFXRJTGkfW1_NSWzThDYLGKpSOMUCTnZGEc6P8BZ4dg"
 DEFAULT_OZON_START_CELL = "A1"
 DEFAULT_WB_START_CELL = "F1"
@@ -28,6 +30,7 @@ DEFAULT_SOURCE_COST_GENERAL_START_CELL = "BK1"
 DEFAULT_OZON_PLACEMENT_START_CELL = "K1"
 DEFAULT_SOURCE_PRODUCTION_INVENTORY_START_CELL = "Q1"
 DEFAULT_SOURCE_SUPPLY_PIPELINE_START_CELL = "X1"
+DEFAULT_SOURCE_SUPPLY_ORDER_SPECS_START_CELL = "H1"
 DEFAULT_API_ERP_TRU_SALES_START_CELL = "AE1"
 OZON_ORDER_EXPORT_TIME_ZONE = "UTC"
 WB_ORDER_EXPORT_TIME_ZONE = "UTC"
@@ -84,6 +87,13 @@ class SourceSupplyPipelineSheetRow:
 
 
 @dataclass(frozen=True)
+class SourceSupplyOrderSpecSheetRow:
+    article: str
+    specification: str
+    production_date: date | None
+
+
+@dataclass(frozen=True)
 class SheetSyncResult:
     mode: str
     prepared_rows: int
@@ -135,7 +145,7 @@ class ApiErpTruSalesExportResult:
 
 @dataclass(frozen=True)
 class SourceBlockExportResult:
-    block: Literal["production-inventory", "supply-pipeline", "source-cost-ozon", "source-cost-wb", "source-cost-general"]
+    block: Literal["production-inventory", "supply-pipeline", "supply-order-specs", "source-cost-ozon", "source-cost-wb", "source-cost-general"]
     sheet_name: str
     start_cell: str
     rows_count: int
@@ -280,6 +290,19 @@ def build_source_supply_pipeline_sheet_values(rows: Sequence[SourceSupplyPipelin
     return values
 
 
+def build_source_supply_order_specs_sheet_values(rows: Sequence[SourceSupplyOrderSpecSheetRow]) -> list[list[Any]]:
+    values: list[list[Any]] = [SOURCE_SUPPLY_ORDER_SPECS_EXPORT_HEADERS]
+    for row in rows:
+        values.append(
+            [
+                row.article,
+                row.specification,
+                "" if row.production_date is None else format_sheet_date(row.production_date),
+            ]
+        )
+    return values
+
+
 def _parse_start_cell(start_cell: str) -> tuple[str, int]:
     letters = "".join(char for char in start_cell if char.isalpha()).upper()
     digits = "".join(char for char in start_cell if char.isdigit())
@@ -310,7 +333,7 @@ def _target_columns(start_cell: str, width: int) -> tuple[str, str, int]:
 
 
 def _source_block_number_formats(
-    block: Literal["production-inventory", "supply-pipeline", "source-cost-ozon", "source-cost-wb", "source-cost-general"],
+    block: Literal["production-inventory", "supply-pipeline", "supply-order-specs", "source-cost-ozon", "source-cost-wb", "source-cost-general"],
 ) -> list[dict[str, str]]:
     if block in {"source-cost-ozon", "source-cost-wb", "source-cost-general"}:
         return [
@@ -325,6 +348,12 @@ def _source_block_number_formats(
             {"type": "NUMBER"},
             {"type": "NUMBER"},
             {"type": "NUMBER"},
+        ]
+    if block == "supply-order-specs":
+        return [
+            {"type": "TEXT"},
+            {"type": "TEXT"},
+            {"type": "DATE", "pattern": "dd.mm.yyyy"},
         ]
     return [
         {"type": "TEXT"},
@@ -342,7 +371,7 @@ def _apply_source_block_formats(
     spreadsheet_id: str,
     sheet_name: str,
     start_cell: str,
-    block: Literal["production-inventory", "supply-pipeline", "source-cost-ozon", "source-cost-wb", "source-cost-general"],
+    block: Literal["production-inventory", "supply-pipeline", "supply-order-specs", "source-cost-ozon", "source-cost-wb", "source-cost-general"],
 ) -> None:
     format_columns = getattr(client, "set_column_number_formats", None)
     if not callable(format_columns):
@@ -869,6 +898,30 @@ def fetch_source_supply_pipeline_sheet_rows(*, limit: int | None = None) -> list
             ]
 
 
+def fetch_source_supply_order_specs_sheet_rows(*, limit: int | None = None) -> list[SourceSupplyOrderSpecSheetRow]:
+    limit_sql = "LIMIT %s" if limit is not None else ""
+    params: list[Any] = []
+    if limit is not None:
+        params.append(limit)
+    sql = f"""
+        SELECT article, specification, production_date
+        FROM staging.supply_order_specs_current
+        ORDER BY source_sheet, source_row_number, article
+        {limit_sql}
+    """
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            return [
+                SourceSupplyOrderSpecSheetRow(
+                    article=str(article or ""),
+                    specification=str(specification or ""),
+                    production_date=production_date,
+                )
+                for article, specification, production_date in cur.fetchall()
+            ]
+
+
 def default_placement_expected_date(now: datetime | None = None) -> date:
     current = now or datetime.now(PLACEMENT_REPORT_TZ)
     if current.tzinfo is None:
@@ -1057,7 +1110,7 @@ def export_api_erp_tru_sales_to_sheets(**kwargs: Any) -> int:
 
 def export_source_block_to_sheets(
     *,
-    block: Literal["production-inventory", "supply-pipeline", "source-cost-ozon", "source-cost-wb", "source-cost-general"],
+    block: Literal["production-inventory", "supply-pipeline", "supply-order-specs", "source-cost-ozon", "source-cost-wb", "source-cost-general"],
     **kwargs: Any,
 ) -> int:
     result = run_source_block_to_sheets(block=block, verbose=True, **kwargs)
@@ -1066,7 +1119,7 @@ def export_source_block_to_sheets(
 
 def run_source_block_to_sheets(
     *,
-    block: Literal["production-inventory", "supply-pipeline", "source-cost-ozon", "source-cost-wb", "source-cost-general"],
+    block: Literal["production-inventory", "supply-pipeline", "supply-order-specs", "source-cost-ozon", "source-cost-wb", "source-cost-general"],
     spreadsheet_id: str | None = None,
     sheet_name: str = DEFAULT_ORDERS_SHEET_NAME,
     start_cell: str | None = None,
@@ -1090,6 +1143,13 @@ def run_source_block_to_sheets(
         rows = fetch_source_supply_pipeline_sheet_rows(limit=limit)
         values = build_source_supply_pipeline_sheet_values(rows)
         label = "Список заказов"
+    elif block == "supply-order-specs":
+        sheet_name = DEFAULT_SOURCE_SPECS_SHEET_NAME if sheet_name == DEFAULT_ORDERS_SHEET_NAME else sheet_name
+        target_start_cell = start_cell or DEFAULT_SOURCE_SUPPLY_ORDER_SPECS_START_CELL
+        headers = SOURCE_SUPPLY_ORDER_SPECS_EXPORT_HEADERS
+        rows = fetch_source_supply_order_specs_sheet_rows(limit=limit)
+        values = build_source_supply_order_specs_sheet_values(rows)
+        label = "Спецификации заказов"
     elif block == "source-cost-ozon":
         target_spreadsheet_id = spreadsheet_id or DEFAULT_MP_COST_SPREADSHEET_ID
         target_start_cell = start_cell or DEFAULT_SOURCE_COST_OZON_START_CELL
@@ -1416,9 +1476,15 @@ def _add_common_order_args(parser: argparse.ArgumentParser, *, default_start_cel
     parser.add_argument("--dry-run", action="store_true")
 
 
-def _add_common_sheet_args(parser: argparse.ArgumentParser, *, default_start_cell: str, default_mode: str) -> None:
+def _add_common_sheet_args(
+    parser: argparse.ArgumentParser,
+    *,
+    default_start_cell: str,
+    default_mode: str,
+    default_sheet_name: str = DEFAULT_ORDERS_SHEET_NAME,
+) -> None:
     parser.add_argument("--spreadsheet-id")
-    parser.add_argument("--sheet-name", default=DEFAULT_ORDERS_SHEET_NAME)
+    parser.add_argument("--sheet-name", default=default_sheet_name)
     parser.add_argument("--start-cell", default=default_start_cell)
     parser.add_argument("--limit", type=int)
     parser.add_argument("--mode", choices=("upsert", "replace"), default=default_mode)
@@ -1464,6 +1530,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="выгрузить список заказов в DATA",
     )
     _add_common_sheet_args(source_pipeline, default_start_cell=DEFAULT_SOURCE_SUPPLY_PIPELINE_START_CELL, default_mode="replace")
+
+    source_specs = subparsers.add_parser(
+        "source-supply-order-specs",
+        help="выгрузить LOT и даты производства в DATA 2",
+    )
+    _add_common_sheet_args(
+        source_specs,
+        default_start_cell=DEFAULT_SOURCE_SUPPLY_ORDER_SPECS_START_CELL,
+        default_mode="replace",
+        default_sheet_name=DEFAULT_SOURCE_SPECS_SHEET_NAME,
+    )
 
     source_cost_ozon = subparsers.add_parser(
         "source-cost-ozon",
@@ -1534,6 +1611,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "source-supply-pipeline":
         return export_source_block_to_sheets(
             block="supply-pipeline",
+            spreadsheet_id=args.spreadsheet_id,
+            sheet_name=args.sheet_name,
+            start_cell=args.start_cell,
+            limit=args.limit,
+            mode=args.mode,
+            dry_run=args.dry_run,
+        )
+    if args.command == "source-supply-order-specs":
+        return export_source_block_to_sheets(
+            block="supply-order-specs",
             spreadsheet_id=args.spreadsheet_id,
             sheet_name=args.sheet_name,
             start_cell=args.start_cell,

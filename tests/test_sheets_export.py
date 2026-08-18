@@ -9,16 +9,20 @@ from app.ops.sheets_export import (
     DEFAULT_ORDERS_SHEET_NAME,
     DEFAULT_OZON_START_CELL,
     DEFAULT_SOURCE_COST_GENERAL_START_CELL,
+    DEFAULT_SOURCE_SPECS_SHEET_NAME,
+    DEFAULT_SOURCE_SUPPLY_ORDER_SPECS_START_CELL,
     DEFAULT_WB_START_CELL,
     OzonPlacementSheetRow,
     OzonOrderSheetRow,
     SourceProductionInventorySheetRow,
+    SourceSupplyOrderSpecSheetRow,
     SourceSupplyPipelineSheetRow,
     WB_ORDER_EXPORT_TIME_ZONE,
     build_ozon_placement_sheet_values,
     build_ozon_order_sheet_values,
     build_source_marketplace_cost_sheet_values,
     build_source_production_inventory_sheet_values,
+    build_source_supply_order_specs_sheet_values,
     build_source_supply_pipeline_sheet_values,
     default_orders_date_from,
     plan_sheet_table_sync,
@@ -154,6 +158,21 @@ class SheetsExportTests(unittest.TestCase):
             build_source_supply_pipeline_sheet_values(pipeline_rows),
             [["Артикул", "СОГЛ Заказа", "В ПРОИЗВ", "ГОТОВ", "В ПУТИ", "МИНСК"], ["21045", 1, 2, 3, 4, "10.08.2026"]],
         )
+
+    def test_build_source_supply_order_specs_sheet_values(self) -> None:
+        values = build_source_supply_order_specs_sheet_values(
+            [
+                SourceSupplyOrderSpecSheetRow(
+                    article="25009",
+                    specification="R137",
+                    production_date=date(2025, 4, 1),
+                )
+            ]
+        )
+
+        self.assertEqual(DEFAULT_SOURCE_SPECS_SHEET_NAME, "DATA 2")
+        self.assertEqual(DEFAULT_SOURCE_SUPPLY_ORDER_SPECS_START_CELL, "H1")
+        self.assertEqual(values, [["Артикул", "LOT", "Дата производства"], ["25009", "R137", "01.04.2025"]])
 
     def test_source_cost_general_export_shape(self) -> None:
         values = build_source_marketplace_cost_sheet_values(

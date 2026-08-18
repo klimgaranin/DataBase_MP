@@ -76,6 +76,7 @@ def main() -> int:
     error: Optional[str] = None
     inventory: SourceBlockExportResult | None = None
     pipeline: SourceBlockExportResult | None = None
+    specs: SourceBlockExportResult | None = None
 
     try:
         log.info("Выгрузка файловых блоков в Sheets: старт, режим=%s, dry_run=%s", mode, bool(cfg["dry_run"]))
@@ -91,8 +92,15 @@ def main() -> int:
             dry_run=bool(cfg["dry_run"]),
             verbose=False,
         )
+        specs = run_source_block_to_sheets(
+            block="supply-order-specs",
+            mode=mode,  # type: ignore[arg-type]
+            dry_run=bool(cfg["dry_run"]),
+            verbose=False,
+        )
         log.info("Выгрузка файловых блоков в Sheets: %s", _format_result("остатки МП", inventory))
         log.info("Выгрузка файловых блоков в Sheets: %s", _format_result("список заказов", pipeline))
+        log.info("Выгрузка файловых блоков в Sheets: %s", _format_result("спецификации заказов", specs))
         return 0
     except Exception as exc:
         status = "fail"
@@ -104,10 +112,17 @@ def main() -> int:
         try:
             inventory_sync = inventory.sync if inventory is not None else None
             pipeline_sync = pipeline.sync if pipeline is not None else None
+            specs_sync = specs.sync if specs is not None else None
             updated_cells = (inventory_sync.updated_cells if inventory_sync is not None else 0) + (
                 pipeline_sync.updated_cells if pipeline_sync is not None else 0
+            ) + (
+                specs_sync.updated_cells if specs_sync is not None else 0
             )
-            rows_count = (inventory.rows_count if inventory is not None else 0) + (pipeline.rows_count if pipeline is not None else 0)
+            rows_count = (
+                (inventory.rows_count if inventory is not None else 0)
+                + (pipeline.rows_count if pipeline is not None else 0)
+                + (specs.rows_count if specs is not None else 0)
+            )
             insert_job_run(
                 job_name=JOB_NAME,
                 started_at_iso=started_at,
@@ -127,7 +142,7 @@ def main() -> int:
             log.warning("Выгрузка файловых блоков в Sheets: не удалось записать итог запуска в job_runs: %s", job_error)
 
         ts = now_msk_label()
-        if status == "ok" and inventory is not None and pipeline is not None:
+        if status == "ok" and inventory is not None and pipeline is not None and specs is not None:
             msg = render_job_alert(
                 JobAlert(
                     job_name=ALERT_NAME,
@@ -136,8 +151,9 @@ def main() -> int:
                     metrics=(
                         sheet_rows_metric("Остатки МП", inventory),
                         sheet_rows_metric("Список заказов", pipeline),
+                        sheet_rows_metric("Спецификации", specs),
                     ),
-                    warnings=sheet_sync_warnings((inventory, pipeline)),
+                    warnings=sheet_sync_warnings((inventory, pipeline, specs)),
                 )
             )
         else:

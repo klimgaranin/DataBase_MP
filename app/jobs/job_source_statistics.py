@@ -51,6 +51,7 @@ ACTIVE_INTERNAL_TABLES = {"Остатки_СМП_ОСН_СОХ_СВХ_ТС", "С
 def _db_functions() -> dict[str, object]:
     from app.db import (
         advisory_unlock,
+        get_latest_source_file_snapshot_info,
         get_latest_source_file_sha256,
         insert_job_run,
         insert_production_inventory_snapshot,
@@ -65,6 +66,7 @@ def _db_functions() -> dict[str, object]:
 
     return {
         "advisory_unlock": advisory_unlock,
+        "get_latest_source_file_snapshot_info": get_latest_source_file_snapshot_info,
         "get_latest_source_file_sha256": get_latest_source_file_sha256,
         "insert_job_run": insert_job_run,
         "insert_production_inventory_snapshot": insert_production_inventory_snapshot,
@@ -213,12 +215,32 @@ def _file_changed(
     return previous != sha256
 
 
+def _source_snapshot_changed(
+    *,
+    source_name: str,
+    table_name: str,
+    sha256: str,
+    current_row_count: int,
+    latest_snapshot_info,
+    skip_unchanged: bool,
+) -> bool:
+    if not skip_unchanged or latest_snapshot_info is None:
+        return True
+    previous = latest_snapshot_info(source_name=source_name, table_name=table_name)
+    if previous is None:
+        return True
+    if previous.get("file_sha256") != sha256:
+        return True
+    return int(previous.get("row_count") or 0) == 0 and current_row_count > 0
+
+
 def _apply_direct_file_sources(
     normalized: dict[str, list[dict]],
     cfg: dict[str, object],
     log,
     *,
     latest_sha256=None,
+    latest_snapshot_info=None,
 ) -> tuple[list[dict], set[str], int, int]:
     snapshots: list[dict] = []
     missing_tables: set[str] = set()
@@ -255,11 +277,12 @@ def _apply_direct_file_sources(
         else:
             unchanged_files += 1
             log.info("Файловая статистика: список заказов не изменился, запись пропущена: %s", orders_path)
-        if _file_changed(
+        if _source_snapshot_changed(
             source_name="Список заказов",
             table_name="Список_заказов_спецификации",
             sha256=orders_sha,
-            latest_sha256=latest_sha256,
+            current_row_count=len(spec_rows),
+            latest_snapshot_info=latest_snapshot_info,
             skip_unchanged=skip_unchanged,
         ):
             normalized["supply_order_specs"] = direct_spec_rows
@@ -352,11 +375,13 @@ def main() -> int:
 
         normalized = _empty_normalized()
         latest_sha256 = None if cfg["dry_run"] else db["get_latest_source_file_sha256"]
+        latest_snapshot_info = None if cfg["dry_run"] else db["get_latest_source_file_snapshot_info"]
         direct_snapshots, missing_tables, unchanged_files, direct_source_rows = _apply_direct_file_sources(
             normalized,
             cfg,
             log,
             latest_sha256=latest_sha256,
+            latest_snapshot_info=latest_snapshot_info,
         )
         source_rows = direct_source_rows
 

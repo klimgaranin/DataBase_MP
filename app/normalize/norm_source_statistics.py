@@ -4,6 +4,34 @@ from datetime import date, datetime
 from typing import Any
 
 
+RU_MONTHS = {
+    "январь": 1,
+    "января": 1,
+    "февраль": 2,
+    "февраля": 2,
+    "март": 3,
+    "марта": 3,
+    "апрель": 4,
+    "апреля": 4,
+    "май": 5,
+    "мая": 5,
+    "июнь": 6,
+    "июня": 6,
+    "июль": 7,
+    "июля": 7,
+    "август": 8,
+    "августа": 8,
+    "сентябрь": 9,
+    "сентября": 9,
+    "октябрь": 10,
+    "октября": 10,
+    "ноябрь": 11,
+    "ноября": 11,
+    "декабрь": 12,
+    "декабря": 12,
+}
+
+
 def parse_int(value: Any) -> int:
     if value in (None, ""):
         return 0
@@ -40,7 +68,22 @@ def parse_date(value: Any) -> date | None:
     try:
         return datetime.fromisoformat(text.replace("Z", "+00:00")).date()
     except ValueError:
-        return None
+        return parse_ru_month_year(text)
+
+
+def parse_ru_month_year(value: str) -> date | None:
+    parts = value.lower().replace(",", " ").split()
+    year = None
+    month = None
+    for part in parts:
+        cleaned = part.strip(".")
+        if cleaned in RU_MONTHS:
+            month = RU_MONTHS[cleaned]
+        elif cleaned.isdigit() and len(cleaned) == 4:
+            year = int(cleaned)
+    if year and month:
+        return date(year, month, 1)
+    return None
 
 
 def article(value: Any) -> str:

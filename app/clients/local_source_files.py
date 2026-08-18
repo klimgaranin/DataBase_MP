@@ -305,7 +305,9 @@ def _is_specification_column(column_name: str) -> bool:
 
 def _is_production_date_column(column_name: str) -> bool:
     normalized = column_name.strip().lower().replace("ё", "е")
-    return "дата" in normalized and ("производ" in normalized or "производсв" in normalized)
+    return ("дата" in normalized or "год" in normalized or "месяц" in normalized) and (
+        "производ" in normalized or "производсв" in normalized
+    )
 
 
 def _find_header_row(rows: list[tuple[Any, ...]]) -> int:

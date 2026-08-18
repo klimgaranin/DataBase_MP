@@ -151,6 +151,17 @@ def build_parser() -> argparse.ArgumentParser:
     sheets_source_pipeline.add_argument("--mode", choices=("upsert", "replace"), default="replace")
     sheets_source_pipeline.add_argument("--dry-run", action="store_true")
 
+    sheets_source_specs = sheets_subparsers.add_parser(
+        "source-supply-order-specs",
+        help="выгрузить LOT и даты производства в DATA 2",
+    )
+    sheets_source_specs.add_argument("--spreadsheet-id")
+    sheets_source_specs.add_argument("--sheet-name", default="DATA 2")
+    sheets_source_specs.add_argument("--start-cell", default="H1")
+    sheets_source_specs.add_argument("--limit", type=int)
+    sheets_source_specs.add_argument("--mode", choices=("upsert", "replace"), default="replace")
+    sheets_source_specs.add_argument("--dry-run", action="store_true")
+
     sheets_source_cost_ozon = sheets_subparsers.add_parser(
         "source-cost-ozon",
         help="выгрузить себестоимость Ozon из 1С в DATA",
