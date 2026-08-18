@@ -160,7 +160,7 @@ def _read_supply_order_spec_sheet(source_rows, *, sheet_name: str) -> list[dict[
                 "Лист": sheet_name,
                 "Номер строки": excel_row_number,
                 "Артикул": item_article,
-                "LOT": _first_matching(row, _is_specification_column),
+                "LOT": _first_matching(row, _is_lot_column) or _first_matching(row, _is_specification_column),
                 "Дата производства": _first_matching(row, _is_production_date_column),
             }
         )
@@ -300,7 +300,11 @@ def _is_supply_order_spec_sheet(sheet_name: str) -> bool:
 
 def _is_specification_column(column_name: str) -> bool:
     normalized = column_name.strip().lower().replace("ё", "е")
-    return normalized == "lot" or normalized.startswith("спец") or "специф" in normalized
+    return normalized.startswith("спец") or "специф" in normalized
+
+
+def _is_lot_column(column_name: str) -> bool:
+    return column_name.strip().lower() == "lot"
 
 
 def _is_production_date_column(column_name: str) -> bool:

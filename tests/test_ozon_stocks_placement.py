@@ -364,8 +364,8 @@ class PlacementAndLocalFileTests(unittest.TestCase):
             fill_sheet.append(["Артикул", "Спец-ия", "Дата производства"])
             fill_sheet.append([100, "SPEC-1", "03.07.2026"])
             arrived_sheet = workbook.create_sheet("Пришло")
-            arrived_sheet.append(["Артикул", "Спец-ия", "Дата производсвта"])
-            arrived_sheet.append([200, "SPEC-2", "04.07.2026"])
+            arrived_sheet.append(["Артикул", "Спец-ия", "LOT", "Дата производсвта"])
+            arrived_sheet.append([200, 25, "L0124", "04.07.2026"])
             old_sheet = workbook.create_sheet("Пришло old")
             old_sheet.append(["Артикул", "Спец-ия", "Дата производства"])
             old_sheet.append([300, "OLD", "05.07.2026"])
@@ -380,6 +380,7 @@ class PlacementAndLocalFileTests(unittest.TestCase):
             self.assertEqual([row["Лист"] for row in specs], ["Для заполнения", "Пришло"])
             self.assertEqual([row["Артикул"] for row in specs], [100, 200])
             self.assertEqual(specs[0]["LOT"], "SPEC-1")
+            self.assertEqual(specs[1]["LOT"], "L0124")
             self.assertEqual(specs[1]["Дата производства"], "04.07.2026")
 
             stocks_path = root / "Остатки МП.txt"
