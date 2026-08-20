@@ -74,7 +74,7 @@ def read_supply_pipeline_rows(path: str | Path) -> list[dict[str, Any]]:
     rows = read_excel_sheet_rows(path, sheet_name="КНР")
     selected = []
     for row in rows:
-        item_article = row.get("Артикул")
+        item_article = row.get("Артикул") or _first_matching(row, _is_article_column)
         if item_article in (None, ""):
             continue
         selected.append(
@@ -152,7 +152,7 @@ def _read_supply_order_spec_sheet(source_rows, *, sheet_name: str) -> list[dict[
     selected: list[dict[str, Any]] = []
     for excel_row_number, raw_row in enumerate(rows[header_idx + 1 :], start=header_idx + 2):
         row = {headers[idx]: raw_row[idx] if idx < len(raw_row) else None for idx in range(len(headers))}
-        item_article = row.get("Артикул")
+        item_article = row.get("Артикул") or _first_matching(row, _is_article_column)
         if item_article in (None, ""):
             continue
         selected.append(
@@ -304,13 +304,18 @@ def _is_specification_column(column_name: str) -> bool:
     return normalized.startswith("спец") or "специф" in normalized
 
 
+def _is_article_column(column_name: str) -> bool:
+    normalized = column_name.strip().lower().replace("ё", "е")
+    return normalized in {"артикул", "ваш sku"}
+
+
 def _is_lot_column(column_name: str) -> bool:
     return column_name.strip().lower() == "lot"
 
 
 def _is_manager_column(column_name: str) -> bool:
     normalized = column_name.strip().lower().replace("ё", "е")
-    return "менедж" in normalized
+    return "менедж" in normalized or normalized == "кто"
 
 
 def _is_production_date_column(column_name: str) -> bool:

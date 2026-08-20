@@ -367,8 +367,8 @@ class PlacementAndLocalFileTests(unittest.TestCase):
             arrived_sheet.append(["Артикул", "Спец-ия", "LOT", "Менеджер", "Дата производсвта"])
             arrived_sheet.append([200, 25, "L0124", "Иван", "04.07.2026"])
             old_sheet = workbook.create_sheet("Пришло old")
-            old_sheet.append(["Артикул", "LOT", "Менеджер", "Дата производства"])
-            old_sheet.append([300, "OLD", "Ольга", "05.07.2026"])
+            old_sheet.append(["Кто", "АРТИКУЛ", "Спец-ия", "Дата производства"])
+            old_sheet.append(["Ольга", 300, "OLD", "05.07.2026"])
             workbook.save(orders_path)
             workbook.close()
 
