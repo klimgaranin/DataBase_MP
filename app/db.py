@@ -286,6 +286,7 @@ CREATE TABLE IF NOT EXISTS staging.supply_order_specs_current (
     source_row_number INT         NOT NULL DEFAULT 0,
     article           TEXT        NOT NULL,
     specification     TEXT        NOT NULL DEFAULT '',
+    manager_name      TEXT        NOT NULL DEFAULT '',
     production_date   DATE,
     payload           JSONB       NOT NULL DEFAULT '{}'::jsonb,
     source_run_id     TEXT        NOT NULL,
@@ -1342,6 +1343,7 @@ def replace_supply_order_specs_current(rows: list[dict[str, Any]], *, run_id: st
             r.get("source_row_number") or 0,
             r["article"],
             r.get("specification") or "",
+            r.get("manager_name") or "",
             r.get("production_date"),
             json.dumps(r.get("payload", {}), ensure_ascii=False, default=str),
             run_id,
@@ -1360,10 +1362,11 @@ def replace_supply_order_specs_current(rows: list[dict[str, Any]], *, run_id: st
                     """
                     INSERT INTO staging.supply_order_specs_current
                         (source_sheet, source_row_number, article, specification,
-                         production_date, payload, source_run_id, snapped_at)
+                         manager_name, production_date, payload, source_run_id, snapped_at)
                     VALUES %s
                     ON CONFLICT (source_sheet, source_row_number, article) DO UPDATE SET
                         specification = EXCLUDED.specification,
+                        manager_name = EXCLUDED.manager_name,
                         production_date = EXCLUDED.production_date,
                         payload = EXCLUDED.payload,
                         source_run_id = EXCLUDED.source_run_id,
@@ -1371,7 +1374,7 @@ def replace_supply_order_specs_current(rows: list[dict[str, Any]], *, run_id: st
                         updated_at = NOW()
                     """,
                     values,
-                    template="(%s, %s, %s, %s, %s, %s::jsonb, %s, %s)",
+                    template="(%s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s)",
                     page_size=1000,
                 )
             return len(values)

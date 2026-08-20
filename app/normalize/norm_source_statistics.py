@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import re
 from typing import Any
 
 
@@ -30,6 +31,35 @@ RU_MONTHS = {
     "декабрь": 12,
     "декабря": 12,
 }
+
+LOT_CYRILLIC_TO_LATIN = str.maketrans(
+    {
+        "А": "A",
+        "В": "B",
+        "Е": "E",
+        "К": "K",
+        "М": "M",
+        "Н": "H",
+        "О": "O",
+        "Р": "P",
+        "С": "C",
+        "Т": "T",
+        "У": "Y",
+        "Х": "X",
+        "а": "A",
+        "в": "B",
+        "е": "E",
+        "к": "K",
+        "м": "M",
+        "н": "H",
+        "о": "O",
+        "р": "P",
+        "с": "C",
+        "т": "T",
+        "у": "Y",
+        "х": "X",
+    }
+)
 
 
 def parse_int(value: Any) -> int:
@@ -95,6 +125,17 @@ def article(value: Any) -> str:
     if text.isdigit():
         return str(int(text))
     return text
+
+
+def normalize_lot(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        text = str(int(value))
+    else:
+        text = str(value)
+    text = text.translate(LOT_CYRILLIC_TO_LATIN).upper()
+    return re.sub(r"[^A-Z0-9]", "", text)
 
 
 def normalize_order_daily(row: dict[str, Any], *, source_system: str) -> dict[str, Any] | None:
@@ -174,11 +215,15 @@ def normalize_supply_order_spec(row: dict[str, Any]) -> dict[str, Any] | None:
     item_article = article(row.get("Артикул"))
     if not item_article:
         return None
+    lot = normalize_lot(row.get("LOT") or row.get("Спец-ия") or row.get("Спецификация"))
+    payload = dict(row)
+    payload["LOT"] = lot
     return {
         "source_sheet": str(row.get("Лист") or "").strip(),
         "source_row_number": parse_int(row.get("Номер строки")),
         "article": item_article,
-        "specification": str(row.get("LOT") or row.get("Спец-ия") or row.get("Спецификация") or "").strip(),
+        "specification": lot,
+        "manager_name": str(row.get("Менеджер") or "").strip(),
         "production_date": parse_date(row.get("Дата производства") or row.get("Дата производсвта")),
-        "payload": row,
+        "payload": payload,
     }

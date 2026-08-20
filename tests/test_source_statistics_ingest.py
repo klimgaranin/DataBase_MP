@@ -72,16 +72,21 @@ class SourceStatisticsNormalizationTests(unittest.TestCase):
     def test_normalize_internal_blocks(self) -> None:
         inventory = normalize_production_inventory({"Артикул": "021549", "СМП": "1", "ОСН": "2", "СОХ": "3,5", "СВХ": "4", "ТС": "5"})
         pipeline = normalize_supply_pipeline({"Артикул": "ART-1", "СОГЛ Заказа": "1", "В ПРОИЗВ": "2", "ГОТОВ": "3", "В ПУТИ": "4", "МИНСК": "01.07.2026"})
-        spec = normalize_supply_order_spec({"Лист": "1-для заполнения", "Номер строки": 5, "Артикул": "00123", "LOT": "A-7", "Дата производства": "02.08.2026"})
-        month_spec = normalize_supply_order_spec({"Лист": "Пришло", "Номер строки": 6, "Артикул": "00124", "LOT": "B-8", "Дата производства": "апрель 2025"})
+        spec = normalize_supply_order_spec(
+            {"Лист": "1-для заполнения", "Номер строки": 5, "Артикул": "00123", "LOT": "А-7", "Менеджер": "Анна", "Дата производства": "02.08.2026"}
+        )
+        month_spec = normalize_supply_order_spec({"Лист": "Пришло", "Номер строки": 6, "Артикул": "00124", "LOT": "В 8", "Дата производства": "апрель 2025"})
         self.assertEqual(inventory["article"], "21549")
         self.assertEqual(inventory["soh_qty"], 3.5)
         self.assertEqual(inventory["ts_qty"], 5)
         self.assertEqual(pipeline["minsk_date"].isoformat(), "2026-07-01")
         self.assertEqual(pipeline["ready_qty"], 3)
         self.assertEqual(spec["article"], "123")
-        self.assertEqual(spec["specification"], "A-7")
+        self.assertEqual(spec["specification"], "A7")
+        self.assertEqual(spec["manager_name"], "Анна")
+        self.assertEqual(spec["payload"]["LOT"], "A7")
         self.assertEqual(spec["production_date"].isoformat(), "2026-08-02")
+        self.assertEqual(month_spec["specification"], "B8")
         self.assertEqual(month_spec["production_date"].isoformat(), "2025-04-01")
 
     def test_file_changed_uses_latest_saved_sha(self) -> None:

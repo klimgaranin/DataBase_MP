@@ -161,6 +161,7 @@ def _read_supply_order_spec_sheet(source_rows, *, sheet_name: str) -> list[dict[
                 "Номер строки": excel_row_number,
                 "Артикул": item_article,
                 "LOT": _first_matching(row, _is_lot_column) or _first_matching(row, _is_specification_column),
+                "Менеджер": _first_matching(row, _is_manager_column),
                 "Дата производства": _first_matching(row, _is_production_date_column),
             }
         )
@@ -293,9 +294,9 @@ def _first_matching(row: dict[str, Any], predicate) -> Any:
 
 def _is_supply_order_spec_sheet(sheet_name: str) -> bool:
     normalized = sheet_name.strip().lower().replace("ё", "е")
-    if "old" in normalized:
-        return False
-    return "заполн" in normalized or normalized == "пришло" or normalized.endswith("-пришло")
+    normalized = normalized.replace("_", " ").replace("-", " ")
+    normalized = " ".join(normalized.split())
+    return "заполн" in normalized or normalized in {"пришло", "пришло old"}
 
 
 def _is_specification_column(column_name: str) -> bool:
@@ -305,6 +306,11 @@ def _is_specification_column(column_name: str) -> bool:
 
 def _is_lot_column(column_name: str) -> bool:
     return column_name.strip().lower() == "lot"
+
+
+def _is_manager_column(column_name: str) -> bool:
+    normalized = column_name.strip().lower().replace("ё", "е")
+    return "менедж" in normalized
 
 
 def _is_production_date_column(column_name: str) -> bool:
